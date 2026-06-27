@@ -20,10 +20,9 @@ from datetime import datetime, timezone
 
 import requests
 
-HOME = os.path.expanduser("~")
 CONFIG_FILE = os.environ.get(
     "NEWS_TICKERS_CONFIG",
-    os.path.join(HOME, ".hermes", "data", "news_tickers.json"),
+    os.path.join(os.path.dirname(__file__), "..", "data", "news_tickers.json"),
 )
 
 HEADERS = {
