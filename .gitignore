@@ -14,6 +14,10 @@ venv/
 # Data (generated)
 data/csp_candidates.json
 
+# Build scaffolding
+demo/gen_gif.py
+demo/build_cast.py
+
 # IDE
 .idea/
 .vscode/

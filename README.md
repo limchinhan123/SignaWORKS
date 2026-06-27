@@ -2,6 +2,8 @@
   <img src="https://img.shields.io/badge/Python-3.10+-blue?logo=python" alt="Python">
   <img src="https://img.shields.io/badge/Data-Tastytrade-orange?logo=chartdot" alt="TastyTrade">
   <img src="https://img.shields.io/badge/Pricing-Black--Scholes-purple?logo=scipy" alt="Black-Scholes">
+  <img src="https://img.shields.io/badge/Built_by-Hermes_Agent-ff66c4?logo=robotframework" alt="Hermes">
+  <img src="https://img.shields.io/badge/Model-DeepSeek_4.0_Pro-4c6ef5?logo=deepin" alt="DeepSeek">
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License">
 </p>
 
@@ -10,6 +12,12 @@
 **A systematic options income toolkit. Precision, not gambling.**
 
 You're selling insurance on assets you actually want to own, using a statistical edge that has nothing to do with guessing direction. Every trade survives six independent gates before it reaches your eyes. What you do with it is your decision. The toolkit only surfaces what's worth looking at.
+
+<p align="center">
+  <img src="demo/demo.gif" alt="SignaWORKS Demo" width="800">
+  <br>
+  <sub><i>Live scan: 21 actionable setups from a 48-ticker universe. Dracula theme courtesy of asciinema + agg.</i></sub>
+</p>
 
 ---
 
@@ -275,5 +283,5 @@ MIT — use it, modify it, trade with it. If it makes you money, buy your spouse
 ---
 
 <p align="center">
-  <i>Built with Hermes Agent. Deployed on a Hetzner VPS in Nuremberg.</i>
+  <sub>Built entirely by <a href="https://github.com/nousresearch/hermes-agent">Hermes Agent</a> on <strong>DeepSeek 4.0 Pro</strong>. Zero human code written. Every gate, every line of Black-Scholes, every script came from a conversation between Brandon and his Q.</sub>
 </p>
