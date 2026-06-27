@@ -1,0 +1,22 @@
+# Environment
+.env
+tastytrade_creds.env
+google_token.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.venv/
+venv/
+
+# Data (generated)
+data/csp_candidates.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
