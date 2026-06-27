@@ -23,7 +23,7 @@ You're selling insurance on assets you actually want to own, using a statistical
 
 ## Philosophy
 
-Most options trading is directional gambling dressed up as strategy. SignaWORKS starts from a different place: **only sell puts on stocks you'd be comfortable owning at the strike for 12 months.** If the name doesn't pass that test, it never enters the universe.
+Most options trading is directional gambling dressed up as strategy. SignaWORKS starts from a different place: **only sell puts on stocks you'd be comfortable owning at the strike for > 12 months.** If the name doesn't pass that test, it never enters the universe.
 
 From there, the toolkit applies layered filters:
 
