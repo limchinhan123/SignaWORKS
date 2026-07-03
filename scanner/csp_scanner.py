@@ -288,6 +288,18 @@ def fetch_earnings_window(ticker: str) -> int | None:
 
 # --- Main scan -------------------------------------------------------------------
 
+def _dq(tastytrade=True, price=True, ma=True, options=True, earnings=True):
+    """Build a data_quality dict. Each flag tracks whether the data source returned usable data."""
+    return {
+        "scanned_at": datetime.now().isoformat(),
+        "tastytrade_ok": tastytrade,
+        "price_ok": price,
+        "ma_ok": ma,
+        "options_ok": options,
+        "earnings_ok": earnings,
+    }
+
+
 async def scan_tickers(symbols):
     """Run all 6 gates on a list of tickers. Returns list of result dicts."""
     print(f"[1/5] Fetching Tastytrade metrics for {len(symbols)} tickers...", file=sys.stderr)
@@ -301,26 +313,26 @@ async def scan_tickers(symbols):
 
         # Liquidity gate
         if tt and tt["liquidity_rating"] is not None and tt["liquidity_rating"] < 2:
-            results.append({"symbol": sym, "status": "SKIP", "reason": f"Liquidity={tt['liquidity_rating']}"})
+            results.append({"symbol": sym, "status": "SKIP", "reason": f"Liquidity={tt['liquidity_rating']}", **_dq(price=False, ma=False, options=False, earnings=False)})
             continue
 
         # Gate 1: IVR
         if not tt or tt["ivr"] is None or tt["ivr"] < 0.50:
             reason = "NO_DATA" if not tt else f"IVR={tt['ivr']:.0%}"
-            results.append({"symbol": sym, "status": "FAIL_G1", "reason": reason})
+            results.append({"symbol": sym, "status": "FAIL_G1", "reason": reason, **_dq(price=False, ma=False, options=False, earnings=False)})
             continue
 
         # Gate 2: IV/HV
         if tt["iv_hv_diff"] is None or tt["iv_hv_diff"] <= 0:
             reason = f"IV-HV={tt['iv_hv_diff']:.1f}" if tt["iv_hv_diff"] is not None else "NO_DATA"
-            results.append({"symbol": sym, "status": "FAIL_G2", "reason": reason})
+            results.append({"symbol": sym, "status": "FAIL_G2", "reason": reason, **_dq(price=False, ma=False, options=False, earnings=False)})
             continue
 
         print(f"[2/5] {sym}: passed G1+G2 (IVR={tt['ivr']:.0%}, IV-HV={tt['iv_hv_diff']:.1f})", file=sys.stderr)
 
         price, ma50, ma200 = fetch_price_and_mas(sym)
         if not price:
-            results.append({"symbol": sym, "status": "FAIL", "reason": "yfinance price fetch failed"})
+            results.append({"symbol": sym, "status": "FAIL", "reason": "yfinance price fetch failed", **_dq(price=False, ma=False, options=False, earnings=False)})
             continue
 
         # Gate 3: MAs
@@ -329,6 +341,7 @@ async def scan_tickers(symbols):
             results.append({
                 "symbol": sym, "status": "FAIL_G3", "reason": f"${price:.2f} < 200MA ${ma200:.2f}",
                 "ivr": tt["ivr"], "iv_hv_diff": tt["iv_hv_diff"], "price": price, "ma_tier": tier,
+                **_dq(options=False, earnings=False),
             })
             continue
 
@@ -338,6 +351,7 @@ async def scan_tickers(symbols):
             results.append({
                 "symbol": sym, "status": "FAIL_G4", "reason": "No option chain in 30-55d range",
                 "ivr": tt["ivr"], "iv_hv_diff": tt["iv_hv_diff"], "price": price, "ma_tier": tier,
+                **_dq(options=False, earnings=False),
             })
             continue
 
@@ -346,7 +360,7 @@ async def scan_tickers(symbols):
         # Gate 2.5: Earnings check — fail-closed, compares against actual DTE
         earnings_days = fetch_earnings_window(sym)
         if earnings_days is None:
-            results.append({"symbol": sym, "status": "FAIL_G2p5", "reason": "NO_DATA (earnings calendar unavailable)"})
+            results.append({"symbol": sym, "status": "FAIL_G2p5", "reason": "NO_DATA (earnings calendar unavailable)", **_dq(earnings=False)})
             continue
         if 0 <= earnings_days <= dte:
             # Earnings falls inside the selected expiry window — try pre-earnings
@@ -372,6 +386,7 @@ async def scan_tickers(symbols):
                     "symbol": sym, "status": "FAIL_G2p5",
                     "reason": f"Earnings in {earnings_days}d (inside {dte}d window, no pre-earnings expiry)",
                     "ivr": tt["ivr"], "iv_hv_diff": tt["iv_hv_diff"], "price": price, "ma_tier": tier,
+                    **_dq(),
                 })
                 continue
 
@@ -382,6 +397,7 @@ async def scan_tickers(symbols):
             results.append({
                 "symbol": sym, "status": "FAIL_G4", "reason": f"No put with delta <=0.10 at {dte}d expiry",
                 "ivr": tt["ivr"], "iv_hv_diff": tt["iv_hv_diff"], "price": price, "ma_tier": tier,
+                **_dq(),
             })
             continue
 
@@ -423,6 +439,7 @@ async def scan_tickers(symbols):
             "expiry": exp_str,
             "oi": strike_data["open_interest"],
             "put_iv": round(strike_data["iv"], 4),
+            **_dq(),
         })
 
     return results
