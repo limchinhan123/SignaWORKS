@@ -9,9 +9,9 @@
 
 # SignaWORKS
 
-**A systematic options income toolkit. Precision, not gambling.**
+**A systematic options income toolkit. Precision, not gambling. A framework for people who panic — and want to stop.**
 
-You're selling insurance on assets you actually want to own, using a statistical edge that has nothing to do with guessing direction. Every trade survives six independent gates before it reaches your eyes. What you do with it is your decision. The toolkit only surfaces what's worth looking at.
+You're selling insurance on assets you actually want to own, using a statistical edge that has nothing to do with guessing direction. Every trade survives six independent gates before it reaches your eyes. What you do with it is your decision. The toolkit only surfaces what's worth looking at. When things go wrong — and they will — it gives you something better than a sell button: it shows you what's actually happening under the P&L.
 
 <p align="center">
   <img src="demo/demo.gif" alt="SignaWORKS Demo" width="800">
@@ -23,18 +23,26 @@ You're selling insurance on assets you actually want to own, using a statistical
 
 ## Philosophy
 
-Most options trading is directional gambling dressed up as strategy. SignaWORKS starts from a different place: **only sell puts on stocks you'd be comfortable owning at the strike for > 12 months.** If the name doesn't pass that test, it never enters the universe.
+Here's the thing about options: your brain is wired to panic. A -245% P&L feels like an emergency. Your pulse spikes. Your fingers hover over the sell button. Every instinct screams *get out.*
 
-From there, the toolkit applies layered filters:
+Most of the time, that instinct is wrong.
 
-- **Gate 1:** IV Rank ≥ 50% — sell premium when vol is elevated relative to its own 52-week history. Statistical edge from mean reversion.
-- **Gate 2:** IV > HV — options are pricing more movement than the stock is actually making. You're getting paid for vol risk that exceeds realized vol.
-- **Gate 3:** Price above 200MA — bearish trend breaks the thesis. Below 200MA means assignment risk just jumped.
-- **Gate 4:** Delta ≤ 0.10 — a ~90% probability the put expires worthless, computed via Black-Scholes, not yfinance's approximation.
-- **Gate 5:** Premium display — absolute dollars and return on notional. No hard floor beyond $75 (commissions eat thinner trades).
-- **Gate 6 (soft):** IV direction — declining vol is the optimal entry window. Rising vol means wait or watch.
+Most underwater positions aren't dying. They're just expensive because the market is scared. The stock didn't break. The thesis didn't fail. The vol market had a panic attack and your position's P&L is the collateral damage. Cutting here isn't discipline. It's paying someone else's panic premium.
 
-**48 tickers. 6 gates. 21 actionable. No opinions, no gut feels, no "I think the market is going to..."**
+SignaWORKS exists to put something between your instincts and your brokerage account. Not because you don't know what you're doing, but because nobody thinks clearly when their position is bleeding.
+
+The framework starts from one principle: **only sell puts on stocks you'd be comfortable owning at the strike for > 12 months.** If the name doesn't pass that test, it never enters the universe. This isn't a screener for maximum premium. It's a filter for sleep.
+
+From there:
+
+- **Gate 1:** IV Rank ≥ 50% — sell premium when vol is elevated relative to its own 52-week history. Statistical edge from mean reversion. If everyone's calm, so are you. Wait.
+- **Gate 2:** IV > HV — options are pricing more movement than the stock is actually making. You're selling insurance at a markup. When the markup disappears, you don't sell.
+- **Gate 3:** Price above 200MA — bearish trend breaks the thesis. Below 200MA, assignment risk is asymmetric. This gate alone would have kept you out of half the losing trades you'll ever see.
+- **Gate 4:** Delta ≤ 0.10 — ~90% probability the put expires worthless, computed via Black-Scholes, not yfinance's approximation. You're not guessing direction. You're selling time and probability.
+- **Gate 5:** Premium display — absolute dollars and return on notional. No hard floor beyond $75 (commissions eat thinner trades). Sometimes 0.5% on a sleepy name with declining vol is better than 2.5% on a volatile name still surging.
+- **Gate 6 (soft):** IV direction — declining vol is the optimal entry window. Rising vol means the spike is still building. READY vs WATCH.
+
+**48 tickers. 6 gates. 21 actionable. No opinions, no gut feels, no "I think the market is going to..."** If it doesn't pass the gates, it doesn't reach your eyes.
 
 ---
 
@@ -160,31 +168,39 @@ DTE strategy: **45 DTE entry → 50% profit or 21 DTE exit** (whichever first).
 
 ## How the Framework Makes Non-Binary Decisions
 
-The framework never says "cut" or "hold." It surfaces **what's driving the P&L** and **what would need to happen** for each outcome. The decision is yours, but the calculus is the framework's.
+Here's the trap most traders fall into: they want a yes or no. Cut or hold. The framework refuses to give you one, and that's the point.
+
+A binary answer to a complex position is just guessing with extra steps. What you actually need is: *what's driving this P&L, what would recovery look like, and where exactly am I wrong?*
+
+The framework surfaces those three things and then steps back.
+
+The decision is yours, but the calculus is the framework's.
 
 ### The Escalation Logic
 
 | Trigger | Response |
 |---------|----------|
-| Stable position, clear exit rule | Phases 1-8. Framework resolves in minutes. |
-| Ambiguous signals, extreme P&L | Escalate to Phases 9-11. Deep analysis answers: is this vega or delta? Where's IV going? What would recovery look like? |
-| Binary event inside DTE | Immediate decision required. Phases 3 and 9b only. |
+| Stable position, clear exit rule | Phases 1-8. Straightforward. Resolves in minutes. |
+| Ambiguous signals, extreme P&L | Escalate to Phases 9-11. Deep analysis answers: is this vega or delta? Where's IV going? What would recovery actually look like? |
+| Binary event inside DTE | Immediate decision required. Phases 3 and 9b only. No time for the full framework. |
 
 ### How Phases Interact: A Real Example
 
-**WDC $450P, -245% P&L. DTE 28. IV 111%.**
+**WDC $450P. -245% P&L. DTE 28. IV 111%. July 3, 2026.**
 
-Phase 6 (combined exit rule) returned an ambiguous result: premium loss fired (condition 1), but price held above 50MA (condition 2). Framework says: don't cut yet, but this needs depth.
+This is exactly the kind of position that makes you want to cut immediately. Your brain sees -245% and screams. The framework says: wait. Let's look first.
 
-Phase 9 (deep analysis) revealed **the loss was vega, not delta.** The IV mean-reversion table showed recovery to near-breakeven at 60% IV with zero stock rally. Gamma was benign (0.0016). The position wouldn't spiral.
+Phase 6 (combined exit rule) returned an ambiguous result: premium loss fired (condition 1), but price held above 50MA (condition 2). One condition. Not both. The exit rule says hold, but the P&L says this needs more than a rule-of-thumb.
 
-Phase 10 (forward context) showed no dealer amplification, a mixed analyst picture (one downgrade, two maintains), and 0.94 correlation with STX.
+Phase 9 (deep analysis) revealed **the loss was vega, not delta.** The IV mean-reversion table showed recovery to near-breakeven at 60% IV with zero stock rally. Gamma was 0.0016 — benign across the entire spot range. This position wouldn't spiral. The panic was in the vol market, not in the stock.
 
-Phase 11 (IV outlook) showed **backwardation:** the term structure priced a 25-point IV decline over the next 3 months. The market itself expected vol to collapse.
+Phase 10 (forward context) showed no dealer amplification, a mixed analyst picture (one downgrade, two maintains), and 0.94 correlation with STX. WDC wasn't breaking alone. It was moving with its sector.
+
+Phase 11 (IV outlook) showed **backwardation in the term structure.** Jul 10 IV at 115%, Sep 18 at 101%, Oct 16 at 99%. The market itself had already priced a 25-point IV decline over the next three months. The recovery engine had already been bought and paid for.
 
 **Verdict: Hold. Exit trigger: below $526 for first hour Monday, or touch $500.**
 
-The framework didn't just say "hold." It said: *here's the recovery path, here's the confidence level, here's the line where you're wrong.* Non-binary.
+The framework didn't say "hold." It said: *the loss is panic premium, not structural damage. Recovery requires calm, not a rally. The market agrees IV should decline. Here's exactly where you're wrong.* Then it stepped back.
 
 ---
 
@@ -328,15 +344,15 @@ When a position is live, the framework shifts from binary (pass/fail) to **non-b
 
 ### How They Work Together
 
-The framework is a decision tree, not a checklist:
+Running all 11 phases on a stable position with -$50 P&L is noise, not insight. The framework is a decision tree. You escalate only when you need to.
 
-- **Clarity from Phases 1-8?** Stop. Deliver verdict. Don't drown the reader in data.
-- **Ambiguous?** Escalate to Phases 9-11. Each phase answers one specific question. No phase is run for its own sake.
-- **Vega-driven P&L?** Phase 9c (IV scenarios) and Phase 11 (IV outlook) are primary. Skip gamma profile.
-- **Delta-driven P&L?** Phase 9b (risk matrix) and 9e (gamma profile) are primary. Skip IV scenarios.
-- **Narrative uncertainty?** Phase 10c (analyst action) and 10d (correlations) lead.
+- **Clarity from Phases 1-8?** Stop. Deliver the verdict. Adding more analysis to a clear decision is performance, not thinking.
+- **Ambiguous signals?** Escalate to Phases 9-11. Each phase answers one specific question. If you can't name which question you're answering, you shouldn't be running the phase.
+- **Vega-driven P&L?** Phase 9c (IV scenarios) and Phase 11 (IV outlook) are your primary tools. Skip gamma. The position doesn't need a gamma profile when the problem is vol expansion.
+- **Delta-driven P&L?** Phase 9b (risk matrix) leads. Phase 9e (gamma profile) if acceleration risk is real. IV scenarios are secondary — vol isn't what's hurting you.
+- **Narrative uncertainty?** Phase 10c (analyst action) and 10d (correlations) lead. You can't decide whether to hold if you don't know whether the story is broken.
 
-The phases don't vote. They inform. The trader decides. But the framework ensures the decision is made with every relevant question answered and no noise.
+The phases don't vote. They don't average into a score. They answer questions. You read the answers and decide. The framework's job is to make sure you asked the right ones.
 
 ---
 
@@ -356,25 +372,22 @@ No paid APIs. Tastytrade is free with a funded account. yfinance is free with Ya
 ## FAQ
 
 **Why no trade execution?**
-This is a decision-support toolkit, not a black box. Every trade is yours to size and enter. The tools surface what's statistically worth looking at. You bring the conviction.
+Because black boxes are for people who don't want to understand why they lost money. This is a decision-support toolkit. Every trade is yours to size and enter. The tools surface what's statistically worth looking at. You bring the conviction. If a trade goes wrong, you'll know exactly why — because you made the call, not an algorithm.
 
 **What if the market is calm (low IVR)?**
-Then the scanner returns mostly FAIL_G1. That's the point. You don't force trades into low-vol environments. Patience is a position.
+Then the scanner returns mostly FAIL_G1. That's not a bug. You don't force trades into low-vol environments just because you're bored. Patience is a position, and it's the hardest one to hold.
 
-**How does the position review framework handle extreme P&L?**
-Phases 1-8 handle standard positions. When signals are ambiguous or P&L is extreme, Phases 9-11 escalate into deep analysis: Greeks breakdown, risk matrix, IV scenarios, shock tests, IV outlook. The framework distinguishes vega noise from thesis damage. Most underwater positions are vol events, not structural breakdowns. The framework prevents cutting on noise.
+**My position is down 200%. Should I cut?**
+The worst time to ask that question is when you're looking at the P&L. Your brain wants a binary answer because the discomfort is real. The framework gives you something better: *here's what's driving the loss, here's what recovery looks like, here's where you cut if you're wrong.* Read the [WDC case study](docs/case-study-wdc-450p.md). That position was at -245%. Turned out the loss was vol panic, not thesis damage.
 
 **How does this compare to tastytrade's built-in screener?**
-Tastytrade's screener is broader. SignaWORKS adds Black-Scholes delta from yfinance chains (independent of Tastytrade's pricing), tiered MA analysis, and the ownership-first universe filter. It also integrates post-entry monitoring and the full 11-phase review framework in one pipeline.
+Tastytrade's screener is broader. SignaWORKS adds Black-Scholes delta from yfinance chains (independent of Tastytrade's pricing), tiered MA analysis, and the ownership-first universe filter. More importantly, it doesn't stop at entry. The 11-phase review framework handles what happens after the trade is on — which is where most traders make their worst decisions.
 
 **Can I add my own tickers?**
-Edit `data/csp_universe.json`, add the symbol, ensure it passes the ownership test. Next scan picks it up.
+Edit `data/csp_universe.json`, add the symbol. But ask yourself first: would you own this stock for a year at the strike you're selling? If the answer isn't an immediate yes, it doesn't belong in the universe.
 
 **Weekend vs weekday data?**
-Tastytrade returns Friday close data on weekends. The scanner works, but expiry dates shift. Monday morning shows fresh 45 DTE matches.
-
-**Where can I see the framework in action?**
-Read the [WDC case study](docs/case-study-wdc-450p.md) — a real position at -245% P&L where the framework prevented a reactive cut and surfaced a data-based hold decision.
+Tastytrade returns Friday close data on weekends. The scanner runs, but expiry dates shift. Monday morning shows fresh 45 DTE matches. Don't make Sunday night decisions on Friday data.
 
 ---
 
@@ -385,5 +398,5 @@ MIT — use it, modify it, trade with it. If it makes you money, buy your spouse
 ---
 
 <p align="center">
-  <sub>Built entirely by <a href="https://github.com/nousresearch/hermes-agent">Hermes Agent</a> on <strong>DeepSeek 4.0 Pro</strong>. Zero human code written. Every gate, every line of Black-Scholes, every script came from a conversation between Brandon and his Q.</sub>
+  <sub>Built entirely by <a href="https://github.com/nousresearch/hermes-agent">Hermes Agent</a> on <strong>DeepSeek 4.0 Pro</strong>. Zero human code written. Every gate, every line of Black-Scholes, every phase of the review framework came from a conversation between Brandon and his Q — an agent that doesn't tell him what he wants to hear, just what the numbers actually say.</sub>
 </p>
