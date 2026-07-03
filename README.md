@@ -215,8 +215,7 @@ SignaWORKS/
 │   ├── position_monitor.py   # 3-layer trigger system (post-entry)
 │   └── position_news.py      # Material news filter
 ├── review/
-│   ├── position_review.py    # Position review orchestrator
-│   └── deep_analysis.py      # Greeks, risk matrix, IV outlook, correlations
+│   └── position_review.py    # Position review orchestrator
 ├── demo/
 │   └── demo.py               # Offline walkthrough (no API keys)
 ├── docs/

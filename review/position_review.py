@@ -18,7 +18,7 @@ ENV_CREDS = os.environ.get("TASTYTRADE_CREDS", "")
 SHEET_ID = os.environ.get("TRADE_LEDGER_SHEET_ID", "")
 GOOGLE_TOKEN = os.environ.get("GOOGLE_TOKEN_FILE", "google_token.json")
 
-CUT_LOSS_MULTIPLE = 2.0   # Hard override: >2x premium loss → force close. No exemptions.
+CUT_LOSS_MULTIPLE = 3.0   # Hard override: mid >= credit × 3 (= −200%). No exemptions.
 
 # Shared Black-Scholes from repo-root pricing.py
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -284,7 +284,7 @@ def trigger_status(price, ma50, credit, opt_mid):
     """Return (color, label) for position trigger state.
 
     thesis: price below 50-day MA (bearish signal)
-    loss_breached: option mid >= credit * CUT_LOSS_MULTIPLE (hard exit trigger)
+    loss_breached: option mid >= credit × CUT_LOSS_MULTIPLE (= −200%, hard exit trigger)
 
     The hard exit is unconditional — no IV noise exemption.
     """

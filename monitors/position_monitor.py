@@ -2,7 +2,7 @@
 """
 Two-Layer Trigger Monitor
 - Layer 1: Underlying breaks 50-day MA -> EXIT (thesis broken)
-- Layer 2: Option hits -150% -> EXIT (hard override, no exemptions)
+- Layer 2: Option mid >= credit × 3 (= −200%) -> EXIT (hard override, no exemptions)
 - Combined: Both fire -> HARD EXIT (no ambiguity)
 
 Reads Trade Ledger from Google Sheets. Prints alerts when triggered.
@@ -25,7 +25,7 @@ ENV_CREDS = os.environ.get("TASTYTRADE_CREDS", "")
 SHEET_ID = os.environ.get("TRADE_LEDGER_SHEET_ID", "")
 GOOGLE_TOKEN = os.environ.get("GOOGLE_TOKEN_FILE", "google_token.json")
 
-CUT_LOSS_MULTIPLE = 2.0   # Hard override: >2x premium loss → force close. No exemptions.
+CUT_LOSS_MULTIPLE = 3.0   # Hard override: mid >= credit × 3 (= −200%). No exemptions.
 EQUALS = "="
 
 

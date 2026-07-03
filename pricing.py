@@ -2,7 +2,7 @@
 """
 Shared Pricing Module — single source of truth for options-position-review.
 
-Imported by csp_scanner.py (entry scanner) and deep_analysis.py (position review).
+Imported by csp_scanner.py (entry scanner) and position_review.py (position review).
 One Black-Scholes implementation. One set of constants. No duplication.
 
 Constants:

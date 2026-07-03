@@ -129,4 +129,4 @@ The reader should know what to do in the first 5 lines.
 
 ## Companion Tools
 
-Computational reference at `review/deep_analysis.py`: Black-Scholes Greeks, risk matrices, IV scenarios, shock analysis, gamma profiles, breakeven analysis, IV term structure, historical analogs, correlation, expected move.
+All computational functions live in `pricing.py` (repo root). The single shared module covers Black-Scholes Greeks, risk matrices, IV scenarios, shock analysis, gamma profiles, breakeven analysis, IV term structure, historical analogs, and correlation — imported by both `csp_scanner.py` and `position_review.py`.

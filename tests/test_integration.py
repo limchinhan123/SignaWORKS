@@ -87,7 +87,7 @@ def test_earnings_gate_no_earnings():
 
 
 def test_loss_breached_is_always_red():
-    """>2x loss returns RED regardless of IV. No escape hatch."""
+    """>3× premium (= −200%) returns RED regardless of IV. No escape hatch."""
     from review.position_review import trigger_status
     status, label = trigger_status(price=500, ma50=450, credit=1.0, opt_mid=5.0)
     assert status == "RED", f"Expected RED, got {status}"
@@ -100,6 +100,21 @@ def test_loss_not_breached_returns_green():
     status, label = trigger_status(price=500, ma50=450, credit=10.0, opt_mid=15.0)
     assert status == "GREEN"
     assert "OK" in label
+
+
+def test_wdc_cut_loss_boundary():
+    """Sold $0.50 put → mid $1.51 (= 3.02×, −202%) → EXIT. Boundary: $1.49 (= 2.98×, −198%) → safe.
+    The constant is 3.0; the business rule is −200%."""
+    from review.position_review import trigger_status
+
+    # $0.50 × 3.0 = $1.50 threshold. $1.51 is breached.
+    status, label = trigger_status(price=500, ma50=450, credit=0.50, opt_mid=1.51)
+    assert status == "RED", f"Expected RED for 3.02×, got {status}"
+    assert "EXIT" in label
+
+    # $1.49 is below threshold — not breached.
+    status, label = trigger_status(price=500, ma50=450, credit=0.50, opt_mid=1.49)
+    assert status == "GREEN", f"Expected GREEN for 2.98×, got {status}"
 
 
 def test_loss_breached_plus_thesis_returns_hard_exit():
