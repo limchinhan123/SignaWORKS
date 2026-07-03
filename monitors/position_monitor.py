@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-Three-Layer Trigger Monitor
+Two-Layer Trigger Monitor
 - Layer 1: Underlying breaks 50-day MA -> EXIT (thesis broken)
-- Layer 2: Option hits -150% AND IV Rank > 80% -> WATCH (likely vol artifact)
-- Layer 3: Option hits -150% AND IV Rank < 80% -> EXIT (real damage, not noise)
+- Layer 2: Option hits -150% -> EXIT (hard override, no exemptions)
 - Combined: Both fire -> HARD EXIT (no ambiguity)
 
 Reads Trade Ledger from Google Sheets. Prints alerts when triggered.
@@ -13,7 +12,6 @@ Designed for cron (15 min during US market hours).
 import asyncio
 import os
 import sys
-from pathlib import Path
 from datetime import date
 
 import yfinance as yf

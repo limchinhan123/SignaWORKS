@@ -23,7 +23,6 @@ import json
 import os
 import sys
 from datetime import date, datetime, timedelta
-from decimal import Decimal
 
 ENV_CREDS = os.environ.get("TASTYTRADE_CREDS")
 if ENV_CREDS:
@@ -319,15 +318,6 @@ async def scan_tickers(symbols):
 
         print(f"[2/5] {sym}: passed G1+G2 (IVR={tt['ivr']:.0%}, IV-HV={tt['iv_hv_diff']:.1f})", file=sys.stderr)
 
-        # Gate 2.5: Earnings check — fail-closed on NO_DATA
-        earnings_days = fetch_earnings_window(sym)
-        if earnings_days is None:
-            results.append({"symbol": sym, "status": "FAIL_G2p5", "reason": "NO_DATA (earnings calendar unavailable)"})
-            continue
-        if 0 <= earnings_days <= 45:
-            results.append({"symbol": sym, "status": "FAIL_G2p5", "reason": f"Earnings in {earnings_days}d (inside 45d window)"})
-            continue
-
         price, ma50, ma200 = fetch_price_and_mas(sym)
         if not price:
             results.append({"symbol": sym, "status": "FAIL", "reason": "yfinance price fetch failed"})
@@ -352,6 +342,39 @@ async def scan_tickers(symbols):
             continue
 
         exp_str, dte, puts_df = chain_data
+
+        # Gate 2.5: Earnings check — fail-closed, compares against actual DTE
+        earnings_days = fetch_earnings_window(sym)
+        if earnings_days is None:
+            results.append({"symbol": sym, "status": "FAIL_G2p5", "reason": "NO_DATA (earnings calendar unavailable)"})
+            continue
+        if 0 <= earnings_days <= dte:
+            # Earnings falls inside the selected expiry window — try pre-earnings
+            import yfinance as yf
+            t = yf.Ticker(sym)
+            all_exps = t.options
+            pre_earnings = None
+            today = date.today()
+            for exp_str2 in sorted(all_exps):
+                exp_d = datetime.strptime(exp_str2, "%Y-%m-%d").date()
+                dte2 = (exp_d - today).days
+                # Must be within our acceptable range AND before earnings
+                if 30 <= dte2 <= 55 and dte2 < earnings_days:
+                    pre_earnings = (exp_str2, dte2)
+            if pre_earnings:
+                exp_str, dte = pre_earnings
+                # Re-fetch the chain for this pre-earnings expiry
+                chain2 = t.option_chain(exp_str)
+                puts_df = chain2.puts
+                print(f"  [G2.5] {sym}: switched to pre-earnings expiry {exp_str} ({dte}d)", file=sys.stderr)
+            else:
+                results.append({
+                    "symbol": sym, "status": "FAIL_G2p5",
+                    "reason": f"Earnings in {earnings_days}d (inside {dte}d window, no pre-earnings expiry)",
+                    "ivr": tt["ivr"], "iv_hv_diff": tt["iv_hv_diff"], "price": price, "ma_tier": tier,
+                })
+                continue
+
         T = dte / 365.0
         strike_data = find_target_strike(puts_df, price, T)
 

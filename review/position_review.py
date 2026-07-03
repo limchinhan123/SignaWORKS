@@ -5,7 +5,6 @@ Reads Trade Ledger from Google Sheets. Fetches spot, options, IV metrics, Greeks
 Prints JSON output for downstream formatting.
 """
 import asyncio, os, sys, json
-from pathlib import Path
 from datetime import date
 import math
 import yfinance as yf
@@ -323,6 +322,12 @@ def check_earnings_gate(dte, earnings_date=None):
         return True, "DTE ≤ 7: gamma dominates, no time to recover"
 
     if earnings_date is not None:
+        # Convert string dates from Google Sheets (Trade Ledger)
+        if isinstance(earnings_date, str):
+            try:
+                earnings_date = date.fromisoformat(earnings_date)
+            except (ValueError, TypeError):
+                pass  # unparseable string — treat as no data
         if isinstance(earnings_date, date):
             days_to_earnings = (earnings_date - date.today()).days
             if 0 <= days_to_earnings <= dte:
