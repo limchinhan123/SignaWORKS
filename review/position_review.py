@@ -17,37 +17,22 @@ ENV_CS = os.environ.get("TASTYTRADE_CLIENT_SECRET", "")
 ENV_RT = os.environ.get("TASTYTRADE_REFRESH_TOKEN", "")
 ENV_CREDS = os.environ.get("TASTYTRADE_CREDS", "")
 SHEET_ID = os.environ.get("TRADE_LEDGER_SHEET_ID", "")
-GOOGLE_TOKEN=os.env...E", "google_token.json")
+GOOGLE_TOKEN = os.environ.get("GOOGLE_TOKEN_FILE", "google_token.json")
 
 CUT_LOSS_MULTIPLE = 2.5
 IV_NOISE_THRESHOLD = 0.80
-RISK_FREE_RATE = 0.0425
-EQ = "="
 
-def norm_pdf(x):
-    return math.exp(-0.5 * x * x) / math.sqrt(2 * math.pi)
+# Shared Black-Scholes from repo-root pricing.py
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from pricing import bs_put_greeks, calc_put_delta, R as RISK_FREE_RATE
 
-def norm_cdf(x):
-    return 0.5 * (1 + math.erf(x / math.sqrt(2)))
 
-def bs_greeks(spot, strike, dte, iv, rate=RISK_FREE_RATE, option_type='put'):
-    """Black-Scholes Greeks for monitoring. European approximation."""
-    T = max(dte / 365.0, 1/365.0)
-    d1 = (math.log(spot/strike) + (rate + iv**2/2)*T) / (iv * math.sqrt(T))
-    d2 = d1 - iv * math.sqrt(T)
-
-    if option_type == 'put':
-        delta = norm_cdf(d1) - 1
-        theta = (-spot * iv * norm_pdf(d1) / (2*math.sqrt(T))
-                 - rate * strike * math.exp(-rate*T) * norm_cdf(-d2)) / 365
-    else:
-        delta = norm_cdf(d1)
-        theta = (-spot * iv * norm_pdf(d1) / (2*math.sqrt(T))
-                 + rate * strike * math.exp(-rate*T) * norm_cdf(d2)) / 365
-
-    gamma = norm_pdf(d1) / (spot * iv * math.sqrt(T))
-    vega = spot * math.sqrt(T) * norm_pdf(d1) / 100  # per 1% IV change
-
+def bs_greeks(spot, strike, dte, iv, rate=RISK_FREE_RATE):
+    """Compatibility wrapper around pricing.bs_put_greeks.
+    Returns dict matching old interface: delta, gamma, vega, theta, iv_absolute.
+    Accepts DTE in calendar days (converts to years internally)."""
+    T = max(dte / 365.0, 1 / 365.0)
+    _, delta, gamma, theta, vega, _ = bs_put_greeks(spot, strike, T, iv, rate)
     return {
         'delta': round(delta, 4),
         'gamma': round(gamma, 4),
@@ -55,6 +40,9 @@ def bs_greeks(spot, strike, dte, iv, rate=RISK_FREE_RATE, option_type='put'):
         'theta': round(theta, 2),
         'iv_absolute': round(iv * 100, 1),
     }
+
+
+EQ = "="
 
 def load_tt_creds():
     if ENV_CREDS:
@@ -405,7 +393,7 @@ def compute_forward_look(positions, gex_data, today):
             lo, hi = strike * 0.7, spot
             for _ in range(20):
                 mid_spot = (lo + hi) / 2
-                d = bs_greeks(mid_spot, strike, T, iv, 'put')["delta"]
+                d = calc_put_delta(mid_spot, strike, iv, T)
                 if abs(d + 0.30) < 0.005:
                     break
                 if d < -0.30:

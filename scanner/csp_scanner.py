@@ -25,9 +25,6 @@ import sys
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
-import numpy as np
-from scipy.stats import norm
-
 ENV_CREDS = os.environ.get("TASTYTRADE_CREDS")
 if ENV_CREDS:
     CLIENT_SECRET, REFRESH_TOKEN = ENV_CREDS.split(":", 1)
@@ -36,7 +33,11 @@ else:
     REFRESH_TOKEN = os.environ.get("TASTYTRADE_REFRESH_TOKEN", "")
 
 UNIVERSE_FILE = os.environ.get("CSP_UNIVERSE_FILE", "data/csp_universe.json")
-RISK_FREE_RATE = 0.05  # 5% fixed (approximate T-bill rate)
+
+# Shared Black-Scholes from repo-root pricing.py
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from pricing import calc_put_delta
+
 
 
 # --- Tastytrade helpers -----------------------------------------------------------
@@ -91,15 +92,10 @@ async def fetch_tastytrade_metrics(symbols):
             pass
 
 
-# --- Black-Scholes delta ---------------------------------------------------------
+# --- Strike selection (delta-based) -----------------------------------------------
 
-def calc_put_delta(S, K, sigma, T, r=RISK_FREE_RATE):
-    """Black-Scholes delta for a European put."""
-    if sigma <= 0 or T <= 0:
-        return None
-    d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
-    return -norm.cdf(-d1)
-
+STALENESS_HOURS = 24
+MAX_BID_ASK_SPREAD_PCT = 0.25
 
 def find_target_strike(puts_df, S, T):
     """
@@ -125,6 +121,29 @@ def find_target_strike(puts_df, S, T):
         if abs(delta) <= 0.10 and bid > 0.05:
             ask = row.get("ask", 0) or 0
             mid = (bid + ask) / 2 if bid and ask else (row.get("lastPrice", 0) or 0)
+
+            # Staleness guard: reject if last trade > 24h ago
+            last_trade = row.get("lastTradeDate", None)
+            if last_trade is not None:
+                try:
+                    if isinstance(last_trade, (date, datetime)):
+                        age_hours = (datetime.now() - last_trade).total_seconds() / 3600 \
+                            if isinstance(last_trade, datetime) else \
+                            (datetime.combine(date.today(), datetime.min.time())
+                             - datetime.combine(last_trade, datetime.min.time())).total_seconds() / 3600
+                    else:
+                        age_hours = 0  # Unix timestamp or unknown format, skip staleness check
+                except Exception:
+                    age_hours = 0
+                if age_hours > STALENESS_HOURS:
+                    continue
+
+            # Spread guard: reject if bid/ask spread > 25% of mid
+            if mid > 0:
+                spread_pct = (ask - bid) / mid if ask > bid else 0
+                if spread_pct > MAX_BID_ASK_SPREAD_PCT:
+                    continue
+
             return {
                 "strike": float(row["strike"]),
                 "delta": round(delta, 4),
@@ -393,7 +412,10 @@ def format_json(results):
 def load_universe(path):
     with open(path) as f:
         data = json.load(f)
-    return data.get("tickers", [])
+    tickers = data.get("tickers", [])
+    if tickers and isinstance(tickers[0], dict):
+        return [t.get("symbol", t.get("ticker", "")) for t in tickers if t.get("symbol") or t.get("ticker")]
+    return tickers
 
 
 async def main():
