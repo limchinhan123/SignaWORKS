@@ -123,3 +123,97 @@ def test_loss_breached_plus_thesis_returns_hard_exit():
     status, label = trigger_status(price=400, ma50=500, credit=1.0, opt_mid=5.0)
     assert status == "RED"
     assert label == "HARD EXIT"
+
+
+# ═══════════════════════════════════════════════════════════
+# Edge-case and dangerous-path tests
+# ═══════════════════════════════════════════════════════════
+
+def test_find_target_strike_rejects_stale_option():
+    """Option with last trade > 24h ago is rejected. Returns None."""
+    import pandas as pd
+    from scanner.csp_scanner import find_target_strike
+    from datetime import datetime, timedelta
+    stale_date = datetime.now() - timedelta(hours=30)
+    df = pd.DataFrame([{
+        "strike": 50.0, "impliedVolatility": 0.30,
+        "bid": 2.0, "ask": 2.5, "lastPrice": 2.25,
+        "lastTradeDate": stale_date, "openInterest": 500,
+    }])
+    result = find_target_strike(df, S=55.0, T=45/365)
+    assert result is None, f"Stale option should be rejected, got {result}"
+
+
+def test_find_target_strike_rejects_wide_spread():
+    """Option with bid/ask spread > 25% of mid is rejected."""
+    import pandas as pd
+    from scanner.csp_scanner import find_target_strike
+    # 35% spread: bid=1.0, ask=2.35, mid=1.675, spread=1.35/1.675=80.6%
+    df = pd.DataFrame([{
+        "strike": 50.0, "impliedVolatility": 0.30,
+        "bid": 1.0, "ask": 2.35, "lastPrice": 1.67,
+        "openInterest": 500,
+    }])
+    result = find_target_strike(df, S=55.0, T=45/365)
+    assert result is None, f"Wide spread should be rejected, got {result}"
+
+
+def test_ma_tier_price_equals_ma200():
+    """Price == 200MA: not 'red' (uses strict <), passes if above 50MA."""
+    from scanner.csp_scanner import ma_tier
+    # Exactly at 200MA, above 50MA → green
+    assert ma_tier(100, 90, 100) == "green"
+    # Exactly at 200MA, no 50MA → amber
+    assert ma_tier(100, None, 100) == "amber"
+    # Exactly at 200MA, below 50MA → amber
+    assert ma_tier(100, 101, 100) == "amber"
+    # Below 200MA → red
+    assert ma_tier(99, 90, 100) == "red"
+
+
+def test_trigger_status_credit_zero():
+    """trigger_status with credit=0: notional check doesn't crash."""
+    from review.position_review import trigger_status
+    status, label = trigger_status(price=500, ma50=450, credit=0, opt_mid=5.0)
+    assert status == "GREEN"
+    assert "OK" in label
+
+
+def test_trigger_status_opt_mid_none():
+    """trigger_status with opt_mid=None: doesn't crash, loss not breached."""
+    from review.position_review import trigger_status
+    status, label = trigger_status(price=400, ma50=500, credit=1.0, opt_mid=None)
+    # thesis broken (price < ma50), but loss not breached → ORANGE
+    assert status == "ORANGE"
+    assert "MA50" in label
+
+
+def test_earnings_gate_dte_exactly_7():
+    """DTE == 7: gamma dominates, should trigger."""
+    from review.position_review import check_earnings_gate
+    risk, note = check_earnings_gate(7)
+    assert risk is True
+    assert "gamma dominates" in note
+
+
+def test_earnings_gate_dte_none():
+    """DTE=None: no trigger, no crash."""
+    from review.position_review import check_earnings_gate
+    risk, note = check_earnings_gate(None)
+    assert risk is False
+
+
+def test_earnings_gate_dte_zero():
+    """DTE=0 (expired): no trigger."""
+    from review.position_review import check_earnings_gate
+    risk, note = check_earnings_gate(0)
+    assert risk is False
+
+
+def test_loss_breached_exactly_at_threshold():
+    """mid == credit × CUT_LOSS_MULTIPLE: >= triggers exit."""
+    from review.position_review import trigger_status
+    # CUT_LOSS_MULTIPLE=3.0. credit=1.0 → threshold=3.0
+    status, label = trigger_status(price=500, ma50=450, credit=1.0, opt_mid=3.0)
+    assert status == "RED", f"Exactly at threshold should be RED, got {status}"
+    assert "EXIT" in label
