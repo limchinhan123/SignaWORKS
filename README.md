@@ -416,4 +416,6 @@ MIT — use it, modify it, trade with it. If it makes you money, buy your spouse
 
 <p align="center">
   <sub>Built entirely by <a href="https://github.com/nousresearch/hermes-agent">Hermes Agent</a> on <strong>DeepSeek 4.0 Pro</strong>. Zero human code written. Every gate, every line of Black-Scholes, every phase of the review framework came from a conversation between Brandon and his Q — an agent that doesn't tell him what he wants to hear, just what the numbers actually say.</sub>
+  <br>
+  <sub>Framework reviewed by <strong>Claude</strong>. Security and regression audits by <strong>Codex</strong>. Three rounds, five regressions caught before they shipped.</sub>
 </p>
