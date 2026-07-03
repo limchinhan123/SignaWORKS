@@ -17,6 +17,7 @@ ENV_RT = os.environ.get("TASTYTRADE_REFRESH_TOKEN", "")
 ENV_CREDS = os.environ.get("TASTYTRADE_CREDS", "")
 SHEET_ID = os.environ.get("TRADE_LEDGER_SHEET_ID", "")
 GOOGLE_TOKEN = os.environ.get("GOOGLE_TOKEN_FILE", "google_token.json")
+ACCOUNT_SIZE = float(os.environ.get("ACCOUNT_SIZE", 0))  # 0 = no sizing data available
 
 CUT_LOSS_MULTIPLE = 3.0   # Hard override: mid >= credit × 3 (= −200%). No exemptions.
 
@@ -548,6 +549,8 @@ async def main():
             "status_label": status_label,
             "earnings_risk": earnings_risk,
             "earnings_note": earnings_note,
+            "assignment_notional": round(int(pos.get("quantity", 1) or 1) * 100 * strike, 2) if strike else None,
+            "position_pct": round(int(pos.get("quantity", 1) or 1) * 100 * strike / ACCOUNT_SIZE * 100, 1) if (strike and ACCOUNT_SIZE > 0) else None,
         }
         output["positions"].append(pos_out)
 
@@ -567,6 +570,25 @@ async def main():
                 "status": status_label,
                 "emoji": status_emoji,
             })
+
+    # Position sizing summary: max assignment notional and concentration check
+    notionals = [p.get("assignment_notional") for p in output["positions"] if p.get("assignment_notional")]
+    sizing = {
+        "total_assignment_notional": round(sum(notionals), 2) if notionals else 0,
+        "max_single_position": round(max(notionals), 2) if notionals else 0,
+        "position_count": len(notionals),
+    }
+    if ACCOUNT_SIZE > 0:
+        sizing["account_size"] = ACCOUNT_SIZE
+        sizing["total_deployed_pct"] = round(sum(notionals) / ACCOUNT_SIZE * 100, 1) if notionals else 0
+        sizing["max_single_pct"] = round(max(notionals) / ACCOUNT_SIZE * 100, 1) if notionals else 0
+        # Flag any position over 25% of account
+        sizing["concentration_flag"] = any(
+            n / ACCOUNT_SIZE > 0.25 for n in notionals
+        ) if notionals else False
+    else:
+        sizing["note"] = "Set ACCOUNT_SIZE env var for position_pct calculation"
+    output["position_sizing"] = sizing
 
     output["forward_look"] = compute_forward_look(output["positions"], output["gex"], today)
 
