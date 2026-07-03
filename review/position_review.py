@@ -19,8 +19,7 @@ ENV_CREDS = os.environ.get("TASTYTRADE_CREDS", "")
 SHEET_ID = os.environ.get("TRADE_LEDGER_SHEET_ID", "")
 GOOGLE_TOKEN = os.environ.get("GOOGLE_TOKEN_FILE", "google_token.json")
 
-CUT_LOSS_MULTIPLE = 2.0   # Hard override: >2x premium loss → force close
-HARD_LOSS_DELTA = 0.25   # Override only applies when |delta| ≥ this threshold
+CUT_LOSS_MULTIPLE = 2.0   # Hard override: >2x premium loss → force close. No exemptions.
 IV_NOISE_THRESHOLD = 0.80
 
 # Shared Black-Scholes from repo-root pricing.py
@@ -286,21 +285,16 @@ async def get_gex_data(symbol="SPY"):
 def trigger_status(price, ma50, credit, opt_mid, iv_rank):
     thesis = (price and ma50 and price < ma50)
     loss_breached = False
-    iv_noise = False
     if credit and opt_mid:
         threshold = credit * CUT_LOSS_MULTIPLE
         if opt_mid >= threshold:
             loss_breached = True
-            if iv_rank and iv_rank > IV_NOISE_THRESHOLD:
-                iv_noise = True
 
     if thesis and loss_breached:
         return "RED", "HARD EXIT"
     elif thesis:
         return "ORANGE", "EXIT (MA50)"
-    elif loss_breached and iv_noise:
-        return "YELLOW", "WATCH"
-    elif loss_breached and not iv_noise:
+    elif loss_breached:
         return "RED", "EXIT (Loss)"
     else:
         return "GREEN", "OK"

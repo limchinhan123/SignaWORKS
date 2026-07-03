@@ -252,6 +252,41 @@ def iv_direction_label(change):
         return "\u2192"
 
 
+# --- Earnings gate (pre-entry) ---------------------------------------------------
+
+def fetch_earnings_window(ticker: str) -> int | None:
+    """Return days until next earnings, or None if unavailable (fail-closed).
+
+    Uses yfinance ticker.calendar which returns the next earnings date
+    as a pandas Timestamp in the 'Earnings Date' key.
+    """
+    try:
+        import yfinance as yf
+        from datetime import date
+        t = yf.Ticker(ticker)
+        cal = getattr(t, 'calendar', None)
+        if cal is None:
+            return None
+        # calendar may be a dict or a DataFrame depending on yfinance version
+        if hasattr(cal, 'get'):
+            earnings_date = cal.get('Earnings Date')
+        elif hasattr(cal, 'iloc'):
+            cal_dict = cal.iloc[:, 0].to_dict() if hasattr(cal, 'iloc') else {}
+            earnings_date = cal_dict.get('Earnings Date')
+        else:
+            return None
+        if earnings_date is None:
+            return None
+        if hasattr(earnings_date, 'iloc'):
+            earnings_date = earnings_date.iloc[0]
+        if hasattr(earnings_date, 'to_pydatetime'):
+            earnings_date = earnings_date.to_pydatetime()
+        days = (earnings_date.date() - date.today()).days
+        return days
+    except Exception:
+        return None
+
+
 # --- Main scan -------------------------------------------------------------------
 
 async def scan_tickers(symbols):
@@ -283,6 +318,15 @@ async def scan_tickers(symbols):
             continue
 
         print(f"[2/5] {sym}: passed G1+G2 (IVR={tt['ivr']:.0%}, IV-HV={tt['iv_hv_diff']:.1f})", file=sys.stderr)
+
+        # Gate 2.5: Earnings check — fail-closed on NO_DATA
+        earnings_days = fetch_earnings_window(sym)
+        if earnings_days is None:
+            results.append({"symbol": sym, "status": "FAIL_G2p5", "reason": "NO_DATA (earnings calendar unavailable)"})
+            continue
+        if 0 <= earnings_days <= 45:
+            results.append({"symbol": sym, "status": "FAIL_G2p5", "reason": f"Earnings in {earnings_days}d (inside 45d window)"})
+            continue
 
         price, ma50, ma200 = fetch_price_and_mas(sym)
         if not price:
