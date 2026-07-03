@@ -7,7 +7,7 @@ Run: pytest test_pricing.py -v
 
 import math
 import sys
-sys.path.insert(0, '/root/.hermes/skills/options-position-review/references')
+sys.path.insert(0, '/root/csp-options-toolkit')
 from pricing import (
     bs_put, bs_put_greeks, calc_put_delta, _years, R, TRADING_DAYS, CALENDAR_DAYS,
     risk_matrix, iv_scenarios, breakeven_analysis, prob_otm,

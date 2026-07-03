@@ -27,9 +27,7 @@ ENV_CREDS = os.environ.get("TASTYTRADE_CREDS", "")
 SHEET_ID = os.environ.get("TRADE_LEDGER_SHEET_ID", "")
 GOOGLE_TOKEN = os.environ.get("GOOGLE_TOKEN_FILE", "google_token.json")
 
-CUT_LOSS_MULTIPLE = 2.5
-IV_NOISE_THRESHOLD = 0.80
-
+CUT_LOSS_MULTIPLE = 2.0   # Hard override: >2x premium loss → force close. No exemptions.
 EQUALS = "="
 
 
@@ -183,14 +181,11 @@ def evaluate(positions, technicals, iv_data, option_prices):
 
         thesis_broken = (price and ma50 and price < ma50)
         loss_breached = False
-        iv_noise = False
 
         if credit and opt_mid:
             threshold = credit * CUT_LOSS_MULTIPLE
             if opt_mid >= threshold:
                 loss_breached = True
-                if iv_rank and iv_rank > IV_NOISE_THRESHOLD:
-                    iv_noise = True
 
         if not thesis_broken and not loss_breached:
             continue
@@ -211,28 +206,10 @@ def evaluate(positions, technicals, iv_data, option_prices):
                 f"ORANGE **{sym} {strike}P** - EXIT: underlying below 50-day MA"
             )
             parts.append(f"  Spot ${price:.2f} < 50d MA ${ma50:.2f}")
-        elif loss_breached and iv_noise:
+        elif loss_breached:
             iv_display = f"{iv_rank*100:.0f}%" if iv_rank else "N/A"
             parts.append(
-                f"YELLOW **{sym} {strike}P** - WATCH: -150% hit but likely vol artifact"
-            )
-            parts.append(
-                f"  Option mid ${opt_mid:.2f} >= ${credit * CUT_LOSS_MULTIPLE:.2f}"
-                f" | IV Rank {iv_display}"
-            )
-            if price and ma50:
-                buf_pct = (price - ma50) / price * 100
-                parts.append(
-                    f"  Underlying ${price:.2f} | 50d MA ${ma50:.2f}"
-                    f" | Buffer {buf_pct:.1f}%"
-                )
-            if dte:
-                parts.append(f"  DTE: {dte}d remaining")
-        elif loss_breached and not iv_noise:
-            iv_display = f"{iv_rank*100:.0f}%" if iv_rank else "N/A"
-            parts.append(
-                f"RED **{sym} {strike}P** - EXIT: -150% loss at IV Rank"
-                f" {iv_display} (not vol artifact)"
+                f"RED **{sym} {strike}P** - EXIT: -150% loss (hard override)"
             )
             parts.append(
                 f"  Option mid ${opt_mid:.2f} >= ${credit * CUT_LOSS_MULTIPLE:.2f}"

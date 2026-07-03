@@ -89,8 +89,7 @@ def test_earnings_gate_no_earnings():
 def test_loss_breached_is_always_red():
     """>2x loss returns RED regardless of IV. No escape hatch."""
     from review.position_review import trigger_status
-    # 5x loss, price above MA50 (thesis False), IVR 90 (was the old escape)
-    status, label = trigger_status(price=500, ma50=450, credit=1.0, opt_mid=5.0, iv_rank=0.90)
+    status, label = trigger_status(price=500, ma50=450, credit=1.0, opt_mid=5.0)
     assert status == "RED", f"Expected RED, got {status}"
     assert "EXIT" in label
 
@@ -98,7 +97,7 @@ def test_loss_breached_is_always_red():
 def test_loss_not_breached_returns_green():
     """Below threshold is OK."""
     from review.position_review import trigger_status
-    status, label = trigger_status(price=500, ma50=450, credit=10.0, opt_mid=15.0, iv_rank=0.90)
+    status, label = trigger_status(price=500, ma50=450, credit=10.0, opt_mid=15.0)
     assert status == "GREEN"
     assert "OK" in label
 
@@ -106,6 +105,6 @@ def test_loss_not_breached_returns_green():
 def test_loss_breached_plus_thesis_returns_hard_exit():
     """Both conditions fire → HARD EXIT."""
     from review.position_review import trigger_status
-    status, label = trigger_status(price=400, ma50=500, credit=1.0, opt_mid=5.0, iv_rank=0.90)
+    status, label = trigger_status(price=400, ma50=500, credit=1.0, opt_mid=5.0)
     assert status == "RED"
     assert label == "HARD EXIT"
