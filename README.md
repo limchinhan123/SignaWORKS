@@ -35,7 +35,14 @@ SignaWORKS exists to put something between your instincts and your brokerage acc
 
 **48 tickers. 6 gates. 21 actionable.** No opinions, no gut feels, no "I think the market is going to..." If it doesn't pass the gates, it doesn't reach your eyes.
 
-The gates are summarized below. But they're not the edge. The edge is Phases 9-11: the deep analysis that tells you *why* your position is down and whether the loss is vega (don't cut) or delta (cut).
+But entry is half the story. On the other side, two exit gates run independently:
+
+- **Thesis broken:** underlying breaks 50-day MA → EXIT. The reason you entered no longer holds.
+- **Hard override:** option mid ≥ 3× premium received (= −200%) → EXIT. No exemptions, no "but IV is high," no escape hatches. This gate is unconditional because some losses aren't noise.
+
+When both fire simultaneously: **HARD EXIT.** No ambiguity, no deliberation, no Phases 9-11. Some positions don't need analysis. They need a stop.
+
+The gates are summarized below. But they're not the edge. The edge is what sits between the entry gates and the exit gates: Phases 9-11, the deep analysis that tells you *why* your position is down and whether the loss is vega (don't cut) or delta (cut).
 
 ---
 
