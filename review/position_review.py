@@ -19,12 +19,13 @@ ENV_CREDS = os.environ.get("TASTYTRADE_CREDS", "")
 SHEET_ID = os.environ.get("TRADE_LEDGER_SHEET_ID", "")
 GOOGLE_TOKEN = os.environ.get("GOOGLE_TOKEN_FILE", "google_token.json")
 
-CUT_LOSS_MULTIPLE = 2.5
+CUT_LOSS_MULTIPLE = 2.0   # Hard override: >2x premium loss → force close
+HARD_LOSS_DELTA = 0.25   # Override only applies when |delta| ≥ this threshold
 IV_NOISE_THRESHOLD = 0.80
 
 # Shared Black-Scholes from repo-root pricing.py
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from pricing import bs_put_greeks, calc_put_delta, R as RISK_FREE_RATE
+from pricing import bs_put_greeks, bs_put, calc_put_delta, R as RISK_FREE_RATE
 
 
 def bs_greeks(spot, strike, dte, iv, rate=RISK_FREE_RATE):
@@ -32,12 +33,12 @@ def bs_greeks(spot, strike, dte, iv, rate=RISK_FREE_RATE):
     Returns dict matching old interface: delta, gamma, vega, theta, iv_absolute.
     Accepts DTE in calendar days (converts to years internally)."""
     T = max(dte / 365.0, 1 / 365.0)
-    _, delta, gamma, theta, vega, _ = bs_put_greeks(spot, strike, T, iv, rate)
+    g = bs_put_greeks(spot, strike, T, iv, rate)
     return {
-        'delta': round(delta, 4),
-        'gamma': round(gamma, 4),
-        'vega': round(vega, 2),
-        'theta': round(theta, 2),
+        'delta': round(g['delta'], 4),
+        'gamma': round(g['gamma'], 4),
+        'vega': round(g['vega'], 2),
+        'theta': round(g['theta'], 2),
         'iv_absolute': round(iv * 100, 1),
     }
 
@@ -169,12 +170,12 @@ def get_technicals_and_options(symbols, positions):
 
 
 def _bs_gamma(spot, strike, T, iv):
-    """Gamma for GEX computation. Returns 0 for invalid inputs."""
+    """Gamma for GEX computation. Delegates to pricing module."""
     if T < 1/365.0 or iv < 0.01 or spot <= 0 or strike <= 0:
         return 0.0
     try:
-        d1 = (math.log(spot/strike) + (RISK_FREE_RATE + iv**2/2)*T) / (iv * math.sqrt(T))
-        return norm_pdf(d1) / (spot * iv * math.sqrt(T))
+        g = bs_put_greeks(spot, strike, T, iv, RISK_FREE_RATE)
+        return g['gamma']
     except (ValueError, ZeroDivisionError):
         return 0.0
 
@@ -305,17 +306,42 @@ def trigger_status(price, ma50, credit, opt_mid, iv_rank):
         return "GREEN", "OK"
 
 
+def check_earnings_gate(dte, earnings_date=None):
+    """Gate 7: Flag binary events inside DTE window.
+
+    If earnings_date is provided and falls within DTE, the position
+    is exposed to binary risk. DTE ≤ 7 always triggers regardless
+    of earnings (gamma dominates, no time to recover).
+
+    Returns (risk_flag: bool, note: str).
+    """
+    if dte is None or dte <= 0:
+        return False, ""
+
+    # DTE ≤ 7: gamma dominates, decide today
+    if dte <= 7:
+        return True, "DTE ≤ 7: gamma dominates, no time to recover"
+
+    if earnings_date is not None:
+        if isinstance(earnings_date, date):
+            days_to_earnings = (earnings_date - date.today()).days
+            if 0 <= days_to_earnings <= dte:
+                return True, f"Earnings in {days_to_earnings}d (inside {dte}d window)"
+
+    return False, ""
+
+
 def bs_price(spot, strike, T, iv, rate=0.0425, option_type='put'):
-    """Black-Scholes option price."""
+    """Black-Scholes option price. Compatibility wrapper around pricing.bs_put."""
     if T <= 0 or iv <= 0 or spot <= 0 or strike <= 0:
         return 0.0
     try:
-        d1 = (math.log(spot / strike) + (rate + iv**2 / 2) * T) / (iv * math.sqrt(T))
-        d2 = d1 - iv * math.sqrt(T)
         if option_type == 'put':
-            return strike * math.exp(-rate * T) * norm_cdf(-d2) - spot * norm_cdf(-d1)
+            return bs_put(spot, strike, T, iv, rate)
         else:
-            return spot * norm_cdf(d1) - strike * math.exp(-rate * T) * norm_cdf(d2)
+            g = bs_put_greeks(spot, strike, T, iv, rate)
+            put_price = bs_put(spot, strike, T, iv, rate)
+            return put_price + spot - strike * math.exp(-rate * T)
     except (ValueError, ZeroDivisionError):
         return 0.0
 
@@ -488,6 +514,11 @@ async def main():
             price, ma50, credit, opt.get("mid"), iv_rank
         )
 
+        # Earnings gate: flag binary risk if earnings inside DTE window
+        earnings_risk, earnings_note = check_earnings_gate(
+            dte_num, pos.get("earnings_date")
+        )
+
         pos_out = {
             "symbol": sym,
             "strike": int(strike) if strike else None,
@@ -510,6 +541,8 @@ async def main():
             "theta": opt.get("theta"),
             "status_emoji": status_emoji,
             "status_label": status_label,
+            "earnings_risk": earnings_risk,
+            "earnings_note": earnings_note,
         }
         output["positions"].append(pos_out)
 

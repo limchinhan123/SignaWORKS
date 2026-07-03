@@ -126,13 +126,19 @@ def find_target_strike(puts_df, S, T):
             last_trade = row.get("lastTradeDate", None)
             if last_trade is not None:
                 try:
-                    if isinstance(last_trade, (date, datetime)):
-                        age_hours = (datetime.now() - last_trade).total_seconds() / 3600 \
-                            if isinstance(last_trade, datetime) else \
-                            (datetime.combine(date.today(), datetime.min.time())
-                             - datetime.combine(last_trade, datetime.min.time())).total_seconds() / 3600
+                    # yfinance returns tz-aware pandas Timestamps. Strip tz
+                    # for comparison with tz-naive datetime.now().
+                    if isinstance(last_trade, datetime):
+                        # pandas.Timestamp is a datetime subclass
+                        lt = last_trade.to_pydatetime() if hasattr(last_trade, 'to_pydatetime') else last_trade
+                        if lt.tzinfo is not None:
+                            lt = lt.replace(tzinfo=None)
+                        age_hours = (datetime.now() - lt).total_seconds() / 3600
+                    elif isinstance(last_trade, date):
+                        age_hours = (datetime.combine(date.today(), datetime.min.time())
+                                     - datetime.combine(last_trade, datetime.min.time())).total_seconds() / 3600
                     else:
-                        age_hours = 0  # Unix timestamp or unknown format, skip staleness check
+                        age_hours = 0
                 except Exception:
                     age_hours = 0
                 if age_hours > STALENESS_HOURS:
