@@ -9,9 +9,9 @@
 
 # SignaWORKS
 
-**A systematic options income toolkit. Precision, not gambling. A framework for people who panic — and want to stop.**
+**A systematic options income toolkit. Precision, not gambling. A framework for people who want to trade based on system, not emotion**
 
-You're selling insurance on assets you actually want to own, using a statistical edge that has nothing to do with guessing direction. Every trade survives six independent gates before it reaches your eyes. What you do with it is your decision. The toolkit only surfaces what's worth looking at. When things go wrong — and they will — it gives you something better than a sell button: it shows you what's actually happening under the P&L.
+You're selling insurance on assets you actually want to own, using a statistical edge that has nothing to do with guessing direction. Every trade survives six independent gates before it reaches your eyes. What you do with it is your decision. The toolkit only surfaces what's worth looking at. When things go wrong — and they will — it gives you something better than a sell button: it shows you what's actually happening under the P&L and recommend best course of actions. 
 
 <p align="center">
   <img src="demo/demo.gif" alt="SignaWORKS Demo" width="800">
