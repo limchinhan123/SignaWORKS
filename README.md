@@ -84,55 +84,107 @@ DTE strategy: **45 DTE entry → 50% profit or 21 DTE exit** (whichever first).
 ## Architecture
 
 ```
-                        ┌──────────────────────────┐
-                        │     csp_universe.json     │
-                        │  48 quality tickers,      │
-                        │  8 sectors, 5 ETFs        │
-                        └────────────┬─────────────┘
-                                     │
-                    ┌────────────────┴────────────────┐
-                    │                                  │
-                    ▼                                  ▼
-     ┌──────────────────────────┐      ┌──────────────────────────┐
-     │    csp_discovery.py      │      │     csp_scanner.py       │
-     │    Weekly Pre-Screen     │      │     On-Demand 6-Gate     │
-     │                          │      │                          │
-     │  • Tastytrade API        │      │  • Tastytrade (G1,G2)    │
-     │  • Liquidity ≥ 2         │      │  • yfinance (G3, price)   │
-     │  • IVR ≥ 50%             │      │  • Black-Scholes (G4)    │
-     │  • IV/HV > 0             │      │  • Premium display (G5)  │
-     │                          │      │  • IV direction (G6)     │
-     └───────────┬──────────────┘      └───────────┬──────────────┘
-                 │                                  │
-                 ▼                                  ▼
-     ┌──────────────────────────┐      ┌──────────────────────────┐
-     │   csp_candidates.json    │      │    Markdown Table        │
-     │   Surviving tickers      │─────▶│    + JSON Output         │
-     │   for detailed scan      │      │                          │
-     └──────────────────────────┘      └──────────────────────────┘
-                                                  │
-                                                  ▼
-                                     ┌──────────────────────────┐
-                                     │   position_monitor.py    │
-                                     │   Post-Entry Management  │
-                                     │                          │
-                                     │  • Layer 1: Price > 50MA │
-                                     │  • Layer 2: P/L + IVR    │
-                                     │  • Layer 3: Material news│
-                                     └──────────────────────────┘
-                                                  │
-                                                  ▼
-                                     ┌──────────────────────────┐
-                                     │   position_review.py     │
-                                     │   Weekly Greek Review    │
-                                     │                          │
-                                     │  • Delta, Gamma, Vega, Θ │
-                                     │  • GEX regime analysis   │
-                                     │  • Forward earnings scan │
-                                     └──────────────────────────┘
+                              ┌──────────────────────────┐
+                              │     csp_universe.json     │
+                              │  48 quality tickers,      │
+                              │  8 sectors, 5 ETFs        │
+                              └────────────┬─────────────┘
+                                           │
+                          ┌────────────────┴────────────────┐
+                          │                                  │
+                          ▼                                  ▼
+           ┌──────────────────────────┐      ┌──────────────────────────┐
+           │    csp_discovery.py      │      │     csp_scanner.py       │
+           │    Weekly Pre-Screen     │      │     On-Demand 6-Gate     │
+           │                          │      │                          │
+           │  • Tastytrade API        │      │  • Tastytrade (G1,G2)    │
+           │  • Liquidity ≥ 2         │      │  • yfinance (G3, price)   │
+           │  • IVR ≥ 50%             │      │  • Black-Scholes (G4)    │
+           │  • IV/HV > 0             │      │  • Premium display (G5)  │
+           │                          │      │  • IV direction (G6)     │
+           └───────────┬──────────────┘      └───────────┬──────────────┘
+                       │                                  │
+                       ▼                                  ▼
+           ┌──────────────────────────┐      ┌──────────────────────────┐
+           │   csp_candidates.json    │      │    Markdown Table        │
+           │   Surviving tickers      │─────▶│    + JSON Output         │
+           │   for detailed scan      │      │                          │
+           └──────────────────────────┘      └──────────────────────────┘
 ```
 
-**Three-phase workflow:** Pre-entry screening → Entry execution (your decision) → Post-entry monitoring and exit management.
+```
+ ╔═══════════════════════════════════════════════════════════════════════╗
+ ║                    POSITION REVIEW FRAMEWORK                          ║
+ ║                    11 Phases · Non-Binary Decisions                   ║
+ ╠═══════════════════════════════════════════════════════════════════════╣
+ ║                                                                       ║
+ ║  ┌──────────────────────┐    ┌──────────────────────┐                ║
+ ║  │ PHASES 1-4: TRIAGE   │    │ PHASES 5-8: DECISION │                ║
+ ║  │                      │    │                      │                ║
+ ║  │ 1. Extract positions │    │ 5. Position analysis │                ║
+ ║  │ 2. Vol environment   │───▶│ 6. Combined exit rule│───▶ ACTION     ║
+ ║  │ 3. Event risk scan   │    │ 7. Support levels    │                ║
+ ║  │ 4. Portfolio check   │    │ 8. Deliver verdict   │                ║
+ ║  └──────────────────────┘    └──────────────────────┘                ║
+ ║            │                          │                               ║
+ ║            │                          │ AMBIGUOUS?                    ║
+ ║            │                          ▼                               ║
+ ║            │              ┌──────────────────────┐                   ║
+ ║            │              │ PHASES 9-11: DEPTH   │                   ║
+ ║            │              │                      │                   ║
+ ║            │              │ 9.  Deep analysis    │                   ║
+ ║            │              │     Greeks breakdown │                   ║
+ ║            │              │     Risk matrix      │                   ║
+ ║            │              │     IV scenarios     │                   ║
+ ║            │              │     Shock tests      │                   ║
+ ║            │              │     Gamma profile    │                   ║
+ ║            │              │     Breakeven paths  │                   ║
+ ║            │              │                      │                   ║
+ ║            │              │ 10. Forward context  │───▶ INFORMED      ║
+ ║            │              │     Dealer flows     │     DECISION      ║
+ ║            │              │     Expected move    │                   ║
+ ║            │              │     Analyst actions  │                   ║
+ ║            │              │     Correlations     │                   ║
+ ║            │              │                      │                   ║
+ ║            │              │ 11. IV outlook       │                   ║
+ ║            │              │     Term structure   │                   ║
+ ║            │              │     Historical analogs│                  ║
+ ║            └──────────────┴──────────────────────┘                   ║
+ ║                                                                       ║
+ ╚═══════════════════════════════════════════════════════════════════════╝
+```
+
+**Three-tier workflow:** Pre-entry screening (6 gates) → **Entry execution (your decision)** → Post-entry monitoring and exit management (11 phases).
+
+---
+
+## How the Framework Makes Non-Binary Decisions
+
+The framework never says "cut" or "hold." It surfaces **what's driving the P&L** and **what would need to happen** for each outcome. The decision is yours, but the calculus is the framework's.
+
+### The Escalation Logic
+
+| Trigger | Response |
+|---------|----------|
+| Stable position, clear exit rule | Phases 1-8. Framework resolves in minutes. |
+| Ambiguous signals, extreme P&L | Escalate to Phases 9-11. Deep analysis answers: is this vega or delta? Where's IV going? What would recovery look like? |
+| Binary event inside DTE | Immediate decision required. Phases 3 and 9b only. |
+
+### How Phases Interact: A Real Example
+
+**WDC $450P, -245% P&L. DTE 28. IV 111%.**
+
+Phase 6 (combined exit rule) returned an ambiguous result: premium loss fired (condition 1), but price held above 50MA (condition 2). Framework says: don't cut yet, but this needs depth.
+
+Phase 9 (deep analysis) revealed **the loss was vega, not delta.** The IV mean-reversion table showed recovery to near-breakeven at 60% IV with zero stock rally. Gamma was benign (0.0016). The position wouldn't spiral.
+
+Phase 10 (forward context) showed no dealer amplification, a mixed analyst picture (one downgrade, two maintains), and 0.94 correlation with STX.
+
+Phase 11 (IV outlook) showed **backwardation:** the term structure priced a 25-point IV decline over the next 3 months. The market itself expected vol to collapse.
+
+**Verdict: Hold. Exit trigger: below $526 for first hour Monday, or touch $500.**
+
+The framework didn't just say "hold." It said: *here's the recovery path, here's the confidence level, here's the line where you're wrong.* Non-binary.
 
 ---
 
@@ -147,13 +199,15 @@ SignaWORKS/
 │   ├── position_monitor.py   # 3-layer trigger system (post-entry)
 │   └── position_news.py      # Material news filter
 ├── review/
-│   └── position_review.py    # Weekly Greeks + GEX review
+│   ├── position_review.py    # Position review orchestrator
+│   └── deep_analysis.py      # Greeks, risk matrix, IV outlook, correlations
 ├── demo/
 │   └── demo.py               # Offline walkthrough (no API keys)
 ├── docs/
 │   ├── entry-scanner-framework.md
-│   ├── position-review-framework.md
-│   └── volatility-framework.md
+│   ├── position-review-framework.md    # Full 11-phase framework
+│   ├── volatility-framework.md
+│   └── case-study-wdc-450p.md         # Real-world showcase
 ├── data/
 │   └── csp_universe.json     # Curated ticker universe
 ├── .env.example              # Environment variable template
@@ -216,31 +270,73 @@ python3 scanner/csp_scanner.py --tickers AAPL MSFT QQQ --format md
 
 ---
 
-## The Six Gates in Detail
+## The Framework in Full
 
-### Gate 1: IV Rank ≥ 50%
-**Why:** Selling premium when IV is in the top half of its 52-week range gives mean-reversion tailwind. Vol tends to revert. Selling high vol, buying it back lower is the edge.
-**Fails when:** The market is calm. Good for the portfolio, bad for premium.
+### Entry: The Six Gates (Pre-Trade)
 
-### Gate 2: IV > HV
-**Why:** When options are pricing more movement than the stock is actually making, you're selling insurance at a markup. Tastytrade precomputes this as IV30d minus HV30d.
-**Fails when:** Realized vol spikes above implied (MU on June 27: IVR=80% but HV was faster). The gate says "the market decayed before you could sell into it." Listen to it.
+| Gate | Condition | What It Protects Against |
+|:----:|-----------|--------------------------|
+| G1 | IV Rank ≥ 50% | Selling vol at the bottom. Mean-reversion is the edge. |
+| G2 | IV > HV | Options pricing more risk than reality. You're selling markup. |
+| G3 | Price > 200MA | Bearish trend. Assignment risk jumps below 200MA. |
+| G4 | Delta ≤ 0.10 | ~90% probability OTM. Computed via Black-Scholes. |
+| G5 | Premium display | Absolute $ and return on notional. No hard floor below $75. |
+| G6 | IV direction (soft) | Declining = READY. Rising = WATCH. Context, not a gate. |
 
-### Gate 3: Price > 200MA
-**Why:** Below the 200-day moving average means the trend is broken. Assignment risk is asymmetric: a stock in a downtrend is more likely to keep dropping. Also checks 50MA for a tiered signal (green/amber).
-**Fails when:** MSFT $373 < 200MA $448. Even Microsoft in a downtrend isn't a CSP you want.
+**48 tickers. 6 gates. 21 actionable.** That's the entry half.
 
-### Gate 4: Delta ≤ 0.10
-**Why:** ~90% probability the put expires worthless, assuming Black-Scholes assumptions hold. SignaWORKS computes this from the option's own implied volatility (a circular but standard approach), not yfinance's approximation.
-**Fails when:** No strike in the 30-55 DTE range reaches 0.10 delta. The stock is too volatile or the chain doesn't go far enough OTM.
+---
 
-### Gate 5: Premium Display
-**Why:** Absolute dollars and return on notional, side by side. No hard threshold beyond $75 (commissions). Sometimes 0.5% on JNJ with IV declining is better than 2.5% on AMD with IV still surging. You decide.
-**Displays:** `$482 (1.42%)` — you're earning 1.42% on the notional risked for a 45-day hold.
+### Position Review: The 11 Phases (Post-Entry)
 
-### Gate 6: IV Direction (Soft)
-**Why:** Context, not a gate. Declining vol means the spike is receding — optimal entry. Rising vol means the spike is still building — premium will get richer but the underlying might be under stress.
-**READY** vs **WATCH**: declining IV = READY, rising IV = WATCH.
+When a position is live, the framework shifts from binary (pass/fail) to **non-binary.** Each phase answers a specific question. The phases escalate based on urgency.
+
+**Phases 1-4: Triage**
+
+| Phase | Question Answered | What It Produces |
+|:-----:|-------------------|------------------|
+| 1 | What do we hold? | Position table with DTE, delta, P&L, urgency tier |
+| 2 | What's the vol regime? | VIX level, name-level IVR and IV/HV spread |
+| 3 | Any binary events? | Earnings, FOMC, regulatory inside DTE window |
+| 4 | Any portfolio risk? | Sector concentration, expiry clustering, outlier betas |
+
+**Phases 5-8: Decision**
+
+| Phase | Question Answered | What It Produces |
+|:-----:|-------------------|------------------|
+| 5 | How close to the edge? | Distance to strike, delta acceleration, DTE urgency |
+| 6 | Do both exit conditions fire? | Cut signal requires premium loss >1.5x AND price below support |
+| 7 | Where are the supports? | MAs, swing lows, volume profile, round numbers |
+| 8 | What's the verdict? | One-sentence conclusion with specific action triggers |
+
+**Phases 9-11: Depth** (escalated only when Phases 1-8 return ambiguous signals)
+
+| Phase | Question Answered | What It Produces |
+|:-----:|-------------------|------------------|
+| 9a | What's driving the P&L? | Greeks table with plain-English interpretation |
+| 9b | How does P&L evolve? | Risk matrix: price × DTE grid with breakeven |
+| 9c | What if vol mean-reverts? | IV scenarios showing recovery without stock rally |
+| 9d | What about a gap? | 1-day shock table (±1-5% moves) |
+| 9e | Does gamma bite? | Gamma profile across spot range |
+| 9f | How do we get to flat? | Realistic spot/IV breakeven paths |
+| 10a | Are dealers helping or hurting? | Gamma exposure, put/call walls, zero-gamma flip |
+| 10b | Is the market pricing correctly? | Expected move vs actual realized moves |
+| 10c | Is the story broken? | Analyst downgrades, target cuts, narrative shift |
+| 10d | Is recovery name-specific? | Correlation with sector ETF and peer stocks |
+| 11a | Where is IV heading? | Term structure across all expiries |
+| 11b | What does history say? | IV spike analogs with median recovery timelines |
+
+### How They Work Together
+
+The framework is a decision tree, not a checklist:
+
+- **Clarity from Phases 1-8?** Stop. Deliver verdict. Don't drown the reader in data.
+- **Ambiguous?** Escalate to Phases 9-11. Each phase answers one specific question. No phase is run for its own sake.
+- **Vega-driven P&L?** Phase 9c (IV scenarios) and Phase 11 (IV outlook) are primary. Skip gamma profile.
+- **Delta-driven P&L?** Phase 9b (risk matrix) and 9e (gamma profile) are primary. Skip IV scenarios.
+- **Narrative uncertainty?** Phase 10c (analyst action) and 10d (correlations) lead.
+
+The phases don't vote. They inform. The trader decides. But the framework ensures the decision is made with every relevant question answered and no noise.
 
 ---
 
@@ -265,14 +361,20 @@ This is a decision-support toolkit, not a black box. Every trade is yours to siz
 **What if the market is calm (low IVR)?**
 Then the scanner returns mostly FAIL_G1. That's the point. You don't force trades into low-vol environments. Patience is a position.
 
+**How does the position review framework handle extreme P&L?**
+Phases 1-8 handle standard positions. When signals are ambiguous or P&L is extreme, Phases 9-11 escalate into deep analysis: Greeks breakdown, risk matrix, IV scenarios, shock tests, IV outlook. The framework distinguishes vega noise from thesis damage. Most underwater positions are vol events, not structural breakdowns. The framework prevents cutting on noise.
+
 **How does this compare to tastytrade's built-in screener?**
-Tastytrade's screener is broader. SignaWORKS adds Black-Scholes delta from yfinance chains (independent of Tastytrade's pricing), tiered MA analysis, and the ownership-first universe filter. It also integrates post-entry monitoring and weekly Greek reviews in one pipeline.
+Tastytrade's screener is broader. SignaWORKS adds Black-Scholes delta from yfinance chains (independent of Tastytrade's pricing), tiered MA analysis, and the ownership-first universe filter. It also integrates post-entry monitoring and the full 11-phase review framework in one pipeline.
 
 **Can I add my own tickers?**
 Edit `data/csp_universe.json`, add the symbol, ensure it passes the ownership test. Next scan picks it up.
 
 **Weekend vs weekday data?**
 Tastytrade returns Friday close data on weekends. The scanner works, but expiry dates shift. Monday morning shows fresh 45 DTE matches.
+
+**Where can I see the framework in action?**
+Read the [WDC case study](docs/case-study-wdc-450p.md) — a real position at -245% P&L where the framework prevented a reactive cut and surfaced a data-based hold decision.
 
 ---
 
