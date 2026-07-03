@@ -9,9 +9,11 @@
 
 # SignaWORKS
 
-**A systematic options income toolkit. Precision, not gambling. A framework for people who want to trade based on system, not emotion**
+**Know what to do when your position is at −200%. A systematic CSP toolkit where the entry scanner is table stakes and the review framework is the edge.**
 
-You're selling insurance on assets you actually want to own, using a statistical edge that has nothing to do with guessing direction. Every trade survives six independent gates before it reaches your eyes. What you do with it is your decision. The toolkit only surfaces what's worth looking at. When things go wrong — and they will — it gives you something better than a sell button: it shows you what's actually happening under the P&L and recommend best course of actions. 
+Most options tools tell you what to trade. SignaWORKS tells you what to do *after* — when the position is underwater, when your instincts scream "cut," and when cutting is statistically the wrong move. The 6-gate entry scanner gets you into trades with an edge. The 11-phase review framework gets you through them without panic-selling at the worst possible moment. That second part is what separates this from every screener on GitHub.
+
+The framework starts from one principle: **only sell puts on stocks you'd be comfortable owning at the strike for > 12 months.** If the name doesn't pass that test, it never enters the universe. This isn't a screener for maximum premium. It's a filter for sleep.
 
 <p align="center">
   <img src="demo/demo.gif" alt="SignaWORKS Demo" width="800">
@@ -23,7 +25,7 @@ You're selling insurance on assets you actually want to own, using a statistical
 
 ## Philosophy
 
-Here's the thing about options: your brain is wired to panic. A -245% P&L feels like an emergency. Your pulse spikes. Your fingers hover over the sell button. Every instinct screams *get out.*
+Here's the thing about options: your brain is wired to panic. A −245% P&L feels like an emergency. Your pulse spikes. Your fingers hover over the sell button. Every instinct screams *get out.*
 
 Most of the time, that instinct is wrong.
 
@@ -31,18 +33,9 @@ Most underwater positions aren't dying. They're just expensive because the marke
 
 SignaWORKS exists to put something between your instincts and your brokerage account. Not because you don't know what you're doing, but because nobody thinks clearly when their position is bleeding.
 
-The framework starts from one principle: **only sell puts on stocks you'd be comfortable owning at the strike for > 12 months.** If the name doesn't pass that test, it never enters the universe. This isn't a screener for maximum premium. It's a filter for sleep.
+**48 tickers. 6 gates. 21 actionable.** No opinions, no gut feels, no "I think the market is going to..." If it doesn't pass the gates, it doesn't reach your eyes.
 
-From there:
-
-- **Gate 1:** IV Rank ≥ 50% — sell premium when vol is elevated relative to its own 52-week history. Statistical edge from mean reversion. If everyone's calm, so are you. Wait.
-- **Gate 2:** IV > HV — options are pricing more movement than the stock is actually making. You're selling insurance at a markup. When the markup disappears, you don't sell.
-- **Gate 3:** Price above 200MA — bearish trend breaks the thesis. Below 200MA, assignment risk is asymmetric. This gate alone would have kept you out of half the losing trades you'll ever see.
-- **Gate 4:** Delta ≤ 0.10 — ~90% probability the put expires worthless, computed via Black-Scholes, not yfinance's approximation. You're not guessing direction. You're selling time and probability.
-- **Gate 5:** Premium display — absolute dollars and return on notional. No hard floor beyond $75 (commissions eat thinner trades). Sometimes 0.5% on a sleepy name with declining vol is better than 2.5% on a volatile name still surging.
-- **Gate 6 (soft):** IV direction — declining vol is the optimal entry window. Rising vol means the spike is still building. READY vs WATCH.
-
-**48 tickers. 6 gates. 21 actionable. No opinions, no gut feels, no "I think the market is going to..."** If it doesn't pass the gates, it doesn't reach your eyes.
+The gates are summarized below. But they're not the edge. The edge is Phases 9-11: the deep analysis that tells you *why* your position is down and whether the loss is vega (don't cut) or delta (cut).
 
 ---
 
@@ -89,7 +82,32 @@ DTE strategy: **45 DTE entry → 50% profit or 21 DTE exit** (whichever first).
 
 ---
 
-## Architecture
+## The 6 Entry Gates
+
+These are the pre-trade filters. Every ticker in the universe must pass all six before it appears as actionable. The gates are table stakes — necessary, not sufficient.
+
+| Gate | Rule | Why |
+|------|------|-----|
+| **G1** | IV Rank ≥ 50% | Sell premium when vol is elevated. Statistical edge from mean reversion. |
+| **G2** | IV > HV | Options pricing more movement than stock is making. You're selling insurance at a markup. |
+| **G3** | Price above 200MA | Bearish trend breaks the thesis. Below 200MA, assignment risk is asymmetric. |
+| **G4** | Delta ≤ 0.10 | ~90% probability OTM via Black-Scholes. Selling time and probability, not direction. |
+| **G5** | Premium ≥ $75 | Commissions eat thinner trades. Absolute return, not just yield percentage. |
+| **G6** | IV direction (soft) | Declining vol = optimal entry. Rising = spike still building. READY vs WATCH. |
+
+These gates kept you out of NVDA at IVR 22%, kept you out of MSFT below 200MA, and keep you out of every trade where the vol premium isn't actually there.
+
+But entry is the easy part. What happens *after* is where the money is.
+
+---
+
+## Architecture: Two Halves
+
+**Left side (scanner):** 6 gates. 48 tickers → 21 actionable. What to enter.
+
+**Right side (review):** 11 phases. Non-binary decisions. What to do when it goes wrong.
+
+Most tools stop at the left side. SignaWORKS starts there and keeps going.
 
 ```
                               ┌──────────────────────────┐
@@ -377,7 +395,7 @@ Because black boxes are for people who don't want to understand why they lost mo
 Then the scanner returns mostly FAIL_G1. That's not a bug. You don't force trades into low-vol environments just because you're bored. Patience is a position, and it's the hardest one to hold.
 
 **My position is down 200%. Should I cut?**
-The worst time to ask that question is when you're looking at the P&L. Your brain wants a binary answer because the discomfort is real. The framework gives you something better: *here's what's driving the loss, here's what recovery looks like, here's where you cut if you're wrong.* Read the [WDC case study](docs/case-study-wdc-450p.md). That position was at -245%. Turned out the loss was vol panic, not thesis damage.
+The worst time to ask that question is when you're looking at the P&L. Your brain wants a binary answer because the discomfort is real. The framework's Phases 9-11 give you something better: *here's what's driving the loss (vega or delta?), here's what recovery looks like, here's where you cut if you're wrong.* Read the [WDC case study](docs/case-study-wdc-450p.md). That position was at -245%. Phase 9 revealed the loss was vol panic, not thesis damage. Phase 11 showed the market had already priced in IV decline. Verdict: hold.
 
 **How does this compare to tastytrade's built-in screener?**
 Tastytrade's screener is broader. SignaWORKS adds Black-Scholes delta from yfinance chains (independent of Tastytrade's pricing), tiered MA analysis, and the ownership-first universe filter. More importantly, it doesn't stop at entry. The 11-phase review framework handles what happens after the trade is on — which is where most traders make their worst decisions.
