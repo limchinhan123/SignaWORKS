@@ -19,7 +19,17 @@ SHEET_ID = os.environ.get("TRADE_LEDGER_SHEET_ID", "")
 GOOGLE_TOKEN = os.environ.get("GOOGLE_TOKEN_FILE", "google_token.json")
 ACCOUNT_SIZE = float(os.environ.get("ACCOUNT_SIZE", 0))  # 0 = no sizing data available
 
-CUT_LOSS_MULTIPLE = 3.0   # Hard override: mid >= credit × 3 (= −200%). No exemptions.
+# ── Risk thresholds ─────────────────────────────────────────────
+CUT_LOSS_MULTIPLE = 3.0     # Escalation trigger: mid ≥ credit × 3 (= −200% P&L). Diagnose, don't auto-exit.
+CONFIRMED_LOSS_MULTIPLE = 1.5  # Loss must be ≥ 1.5× for delta exit to fire (market confirms the risk)
+WATCH_RESOLUTION_MULTIPLE = 2.0  # Clear 3× YELLOW only when mid drops below 2.0× credit (not 2.99×)
+DELTA_HARD_EXIT   = 0.35    # Put delta ≥ 0.35 → hard exit ONLY when loss ≥ 1.5×; else YELLOW
+DELTA_SOFT_WATCH  = 0.25    # Put delta ≥ 0.25 → material risk ONLY when loss ≥ 1.5×; else benign
+DELTA_LOW_EXPOSURE = 0.15    # Put delta < 0.15  → low current assignment risk
+MA50_PERSISTENCE_DAYS = 2     # Consecutive days below MA50 before ORANGE triggers
+# Delta embeds moneyness, time, AND IV in one number.
+# A stock 15% above strike at 30% IV has a very different delta than
+# the same stock at 121% IV.  Distance alone cannot see this.
 
 # Shared Black-Scholes from repo-root pricing.py
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -281,29 +291,170 @@ async def get_gex_data(symbol="SPY"):
         return {"available": False, "reason": str(e)}
 
 
-def trigger_status(price, ma50, credit, opt_mid):
-    """Return (color, label) for position trigger state.
+def validate_quote(bid, ask, mid, dte=None):
+    """Check for stale, crossed, unreliable, or illiquid quotes.
 
-    thesis: price below 50-day MA (bearish signal)
-    loss_breached: option mid >= credit × CUT_LOSS_MULTIPLE (= −200%, hard exit trigger)
+    Returns (valid: bool, reject_reason: str, warnings: list[str]).
+    valid=False → DATA ALERT, do not use this quote for exit decisions.
+    valid=True with warnings → quote is usable but exercise caution.
 
-    The hard exit is unconditional — no IV noise exemption.
+    Hard rejections: crossed market, spread > 100% of mid.
+    Warnings: spread 20-100% (unreliable midpoint), zero bid/ask (illiquid).
     """
-    thesis = (price and ma50 and price < ma50)
+    warnings = []
+    # ── Zero bid/ask: liquidity warning, skip spread check (would always fire) ──
+    if bid is not None and ask is not None and (bid <= 0 or ask <= 0):
+        warnings.append("zero-volume quote; illiquid")
+        return True, "", warnings
+    # ── Hard rejections ──
+    if bid is not None and ask is not None and bid > ask:
+        return False, "crossed market", []
+    if bid is not None and ask is not None and mid and mid > 0:
+        spread_frac = (ask - bid) / mid
+        if spread_frac > 1.0:
+            return False, "spread >100% of mid", []
+        elif spread_frac >= 0.20:
+            pct = round(spread_frac * 100, 0)
+            warnings.append(f"wide spread ({pct:.0f}% of mid); midpoint unreliable")
+    return True, "", warnings
+
+
+def _estimate_delta(price, strike, dte, iv):
+    """Estimate put delta from Black-Scholes when chain delta is unavailable."""
+    if not all([price, strike, dte, iv]) or dte <= 0 or iv <= 0:
+        return None
+    try:
+        T = max(dte / 365.0, 1 / 365.0)
+        d = calc_put_delta(price, strike, iv, T)
+        return round(abs(d), 4)  # return absolute value for threshold checks
+    except (ValueError, ZeroDivisionError):
+        return None
+
+
+def trigger_status(price, ma50, credit, opt_mid, strike=None, delta=None, dte=None, iv=None, watch_state=None, ma50_state=None):
+    """Return (color, label, watch_info) for position trigger state.
+
+    Three independent risk dimensions.  The highest-severity result wins.
+
+    1. Tier 1 (thesis): price below 50-day MA → ORANGE/EXIT (MA50 alone is
+       weak; the skill layer requires confirmation with 1.5× loss before
+       recommending cut).
+       With ma50_state={days: N}: confirmation gate. Day 1 below MA50 is
+       YELLOW. Day MA50_PERSISTENCE_DAYS+ is ORANGE.
+       Without ma50_state: immediate (backward compatible, manual review mode).
+
+    2. Tier 2 (forward risk via delta): the put's absolute delta measures
+       current assignment risk, incorporating moneyness, time, and IV.
+         delta ≥ DELTA_HARD_EXIT  → RED   EXIT (delta)
+         delta ≥ DELTA_SOFT_WATCH → YELLOW WATCH (delta — needs thesis review)
+         delta <  DELTA_SOFT_WATCH → benign
+
+    3. Tier 3 (escalation): option mid ≥ 3.0× credit (= −200% P&L).
+       This is an escalation trigger, not an exit decision.
+       If forward-risk signals remain benign → YELLOW WATCH (diagnose).
+
+    Priority: RED > ORANGE > YELLOW > GREEN.  A YELLOW from Tier 3
+    never downgrades an ORANGE from Tier 1.
+
+    YELLOW hysteresis: once a 3× YELLOW is triggered, it persists until
+    the option mid drops below WATCH_RESOLUTION_MULTIPLE × credit (= 2.0×).
+    Pass watch_state (from a previous call's watch_info) to maintain state.
+    Without hysteresis, a position oscillates between YELLOW and GREEN at
+    the 3.0× boundary (3.01× → 2.99× → 3.01×).
+    """
+    # ── Tier 1: thesis broken (MA50, with optional persistence gate) ──
+    thesis_broken = False
+    thesis_day1 = False
+    if price and ma50 and price < ma50:
+        if ma50_state is None:
+            thesis_broken = True
+        elif ma50_state.get("days", 0) + 1 >= MA50_PERSISTENCE_DAYS:
+            thesis_broken = True
+        else:
+            thesis_day1 = True
+
+    # ── Tier 3: escalation (3× loss) ──
     loss_breached = False
     if credit and opt_mid:
-        threshold = credit * CUT_LOSS_MULTIPLE
-        if opt_mid >= threshold:
+        if opt_mid >= credit * CUT_LOSS_MULTIPLE:
             loss_breached = True
 
-    if thesis and loss_breached:
-        return "RED", "HARD EXIT"
-    elif thesis:
-        return "ORANGE", "EXIT (MA50)"
-    elif loss_breached:
-        return "RED", "EXIT (Loss)"
-    else:
-        return "GREEN", "OK"
+    # ── Resolve delta ──
+    abs_delta = None
+    if delta is not None:
+        import math
+        if not math.isnan(delta):
+            abs_delta = abs(delta)  # chain-provided delta may be negative
+    if abs_delta is None and price and strike and dte and iv:
+        abs_delta = _estimate_delta(price, strike, dte, iv)
+
+    # ── Tier 2: forward risk via delta (gated by loss confirmation) ──
+    loss_confirmed = bool(credit and opt_mid and opt_mid >= credit * CONFIRMED_LOSS_MULTIPLE)
+    tier2_color = None
+    tier2_label = None
+    if abs_delta is not None:
+        if abs_delta >= DELTA_HARD_EXIT and loss_confirmed:
+            tier2_color = "RED"
+            tier2_label = f"EXIT (delta {abs_delta:.2f})"
+        elif abs_delta >= DELTA_HARD_EXIT:
+            # Delta elevated but loss < 1.5×: risk exists, market hasn't confirmed
+            tier2_color = "YELLOW"
+            tier2_label = f"WATCH (delta {abs_delta:.2f}, unconfirmed)"
+        elif abs_delta >= DELTA_SOFT_WATCH and loss_confirmed:
+            tier2_color = "YELLOW"
+            tier2_label = f"WATCH (delta {abs_delta:.2f})"
+        # abs_delta ≥ DELTA_SOFT_WATCH without loss → benign (proximity isn't risk)
+        # abs_delta < DELTA_SOFT_WATCH → no Tier 2 signal
+
+    # ── Tier 3 escalation decision ──
+    tier3_color = None
+    tier3_label = None
+    tier3_watch_info = None
+    if loss_breached:
+        if abs_delta is None:
+            tier3_color = "YELLOW"
+            tier3_label = "ESCALATE (3.0x, no delta)"
+        elif abs_delta < DELTA_LOW_EXPOSURE:
+            tier3_color = "YELLOW"
+            tier3_label = f"WATCH (3.0x, delta {abs_delta:.2f} low exposure)"
+        elif abs_delta < DELTA_HARD_EXIT:
+            tier3_color = "YELLOW"
+            tier3_label = f"WATCH (3.0x, delta {abs_delta:.2f})"
+        else:
+            pass
+
+        if tier3_color == "YELLOW":
+            current_multiple = round(opt_mid / credit, 2) if credit else 0
+            tier3_watch_info = {
+                "reason": tier3_label,
+                "resolution_at": round(credit * WATCH_RESOLUTION_MULTIPLE, 2),
+                "started_multiple": current_multiple,
+            }
+
+    # ── Combine: highest severity wins ──
+    # RED > ORANGE > YELLOW > GREEN
+    if tier2_color == "RED":
+        return "RED", tier2_label, None
+    if thesis_broken:
+        if loss_breached and (abs_delta and abs_delta >= DELTA_SOFT_WATCH):
+            return "RED", "HARD EXIT", None
+        return "ORANGE", "EXIT (MA50)", None
+    if tier3_color == "YELLOW":
+        return "YELLOW", tier3_label, tier3_watch_info
+    if tier2_color == "YELLOW":
+        return "YELLOW", tier2_label, None
+    if thesis_day1:
+        return "YELLOW", f"WATCH (MA50 breach day 1/{MA50_PERSISTENCE_DAYS})", None
+
+    # ── Hysteresis: persist YELLOW across ticks ──
+    # Only applies when current evaluation would return GREEN.
+    # RED or ORANGE from current evaluation always overrides hysteresis.
+    if watch_state and credit and opt_mid:
+        resolution_at = watch_state.get("resolution_at")
+        if resolution_at and opt_mid >= resolution_at:
+            return "YELLOW", watch_state.get("reason", "WATCH (persisted)"), watch_state
+
+    return "GREEN", "OK", None
 
 
 def check_earnings_gate(dte, earnings_date=None):
@@ -516,8 +667,12 @@ async def main():
             loss_pct = round((opt["mid"] - credit) / credit * 100, 0)
             loss_threshold = round(credit * CUT_LOSS_MULTIPLE, 2)
 
-        status_emoji, status_label = trigger_status(
-            price, ma50, credit, opt.get("mid")
+        status_emoji, status_label, watch_info = trigger_status(
+            price, ma50, credit, opt.get("mid"),
+            strike=strike,
+            delta=opt.get("delta"),
+            dte=dte_num,
+            iv=opt.get("iv_absolute") / 100 if opt.get("iv_absolute") else None,
         )
 
         # Earnings gate: flag binary risk if earnings inside DTE window
@@ -552,6 +707,8 @@ async def main():
             "assignment_notional": round(int(pos.get("quantity", 1) or 1) * 100 * strike, 2) if strike else None,
             "position_pct": round(int(pos.get("quantity", 1) or 1) * 100 * strike / ACCOUNT_SIZE * 100, 1) if (strike and ACCOUNT_SIZE > 0) else None,
         }
+        if watch_info:
+            pos_out["watch_info"] = watch_info
         output["positions"].append(pos_out)
 
         if iv_rank and iv_rank > 0.8:

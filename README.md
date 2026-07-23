@@ -9,7 +9,7 @@
 
 # SignaWORKS
 
-**Know what to do when your position is at −200%. A systematic CSP toolkit where the entry scanner is table stakes and the review framework is the edge.**
+**Know what to do when your position is at −100%. A systematic CSP toolkit where the entry scanner is table stakes and the review framework is the edge.**
 
 Most options tools tell you what to trade. SignaWORKS tells you what to do *after* — when the position is underwater, when your instincts scream "cut," and when cutting may be the wrong move.
 
@@ -59,7 +59,7 @@ Two conditions must BOTH fire before cutting:
 If only one fires, the default is hold. If both fire, cut. This two-condition rule exists precisely because most underwater positions are driven by fear expansion, not broken companies. Requiring both conditions filters out panic.
 
 **Tier 2: Hard Override (unconditional)**
-The option's mid price hits 3× the credit received (= approximately −200% unrealized P&L on premium) → EXIT. No exemptions, no "but fear is high," no escape hatches. This rule is unconditional because at 200% loss, something structural changed. The framework that says "wait for mean-reversion" is the same framework that must say "mean-reversion isn't coming."
+The option's mid price hits 3× the credit received (= approximately −200% unrealized P&L on premium) → EXIT. No exemptions, no "but fear is high," no escape hatches. This rule is unconditional because at 200% loss, something structural changed.
 
 When both tiers fire simultaneously: **HARD EXIT.** No deliberation, no deep analysis. Some positions don't need thinking. They need a stop.
 

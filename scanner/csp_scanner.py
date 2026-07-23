@@ -454,7 +454,8 @@ def format_markdown(results):
     lines.append(f"_{len(results)} tickers scanned_")
     lines.append("")
 
-    actionable = [r for r in results if r["status"] in ("READY", "WATCH", "READY_AMBER", "WATCH_AMBER", "LOW_PREM")]
+    # Accept any status that passed all hard gates
+    actionable = [r for r in results if r["status"].startswith(("READY", "WATCH", "LOW_PREM"))]
     if actionable:
         lines.append("### Actionable")
         lines.append("")

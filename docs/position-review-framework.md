@@ -58,7 +58,7 @@ For each position in urgency order: distance to strike, delta check (> -0.25 = g
 
 | Condition | Threshold |
 |-----------|-----------|
-| Premium loss | > 1.5x premium received |
+| Premium loss | > 2.0x premium received |
 | Underlying price | Below key support |
 
 **Cut only when BOTH fire.**
