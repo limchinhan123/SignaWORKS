@@ -4,9 +4,10 @@ Position Review with Greeks + Trigger Analysis + GEX.
 Reads Trade Ledger from Google Sheets. Fetches spot, options, IV metrics, Greeks.
 Prints JSON output for downstream formatting.
 """
-import asyncio, os, sys, json
-from datetime import date
+import asyncio, os, sys, json, tempfile
+from datetime import date, timedelta
 import math
+import numpy as np
 import yfinance as yf
 from tastytrade import Session, metrics as tt_metrics
 from google.oauth2.credentials import Credentials
@@ -34,6 +35,18 @@ MA50_PERSISTENCE_DAYS = 2     # Consecutive days below MA50 before ORANGE trigge
 # Shared Black-Scholes from repo-root pricing.py
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pricing import bs_put_greeks, bs_put, calc_put_delta, R as RISK_FREE_RATE
+
+# HV utilities for baseline fallback
+sys.path.insert(0, os.path.expanduser("~/.hermes/scripts"))
+try:
+    from hv_utils import compute_hv_window
+except ImportError:
+    compute_hv_window = None
+
+# ── Recovery diagnostic constants ──────────────────────────────────
+RECOVERY_HORIZON_TRADING_DAYS = 2  # default horizon for recovery feasibility
+IV30D_SNAPSHOT_FILE = os.path.expanduser("~/.hermes/cache/iv30d_snapshots.json")
+IV30D_MIN_SNAPSHOTS = 30  # minimum snapshots before baseline is reliable (~6 weeks)
 
 
 def bs_greeks(spot, strike, dte, iv, rate=RISK_FREE_RATE):
@@ -163,12 +176,16 @@ def get_technicals_and_options(symbols, positions):
             mid = (bid + ask) / 2 if bid and ask else last
             iv_abs = float(row["impliedVolatility"].values[0])
             spot = technicals.get(sym, {}).get("price", 0) or mid
-            greeks = bs_greeks(spot, strike, dte, iv_abs) if spot and dte > 0 else {}
+            quote_valid, quote_reason, quote_warnings = validate_quote(bid, ask, mid, dte)
+            greeks = bs_greeks(spot, strike, dte, iv_abs) if spot and dte > 0 and quote_valid else {}
 
             option_data[f"{sym}_{strike}"] = {
                 "bid": bid, "ask": ask, "last": last, "mid": mid,
                 "iv_absolute": round(iv_abs * 100, 1),
                 "dte": dte,
+                "quote_valid": quote_valid,
+                "quote_reason": quote_reason,
+                "quote_warnings": quote_warnings,
                 **greeks
             }
         except Exception:
@@ -319,6 +336,260 @@ def validate_quote(bid, ask, mid, dte=None):
     return True, "", warnings
 
 
+# ═══════════════════════════════════════════════════════════
+# IV30d Snapshot Storage — for future 60-day median baseline
+# ═══════════════════════════════════════════════════════════
+
+def _load_iv30d_snapshots():
+    """Load all iv_30d snapshots. Returns {ticker: [{date, iv_30d}, ...]}."""
+    try:
+        with open(IV30D_SNAPSHOT_FILE, "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_iv30d_snapshots(data):
+    """Atomic write of iv_30d snapshots."""
+    os.makedirs(os.path.dirname(IV30D_SNAPSHOT_FILE), exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(IV30D_SNAPSHOT_FILE), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, indent=2, default=str)
+        os.replace(tmp_path, IV30D_SNAPSHOT_FILE)
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
+
+
+def store_iv30d_snapshot(ticker, iv_30d, snapshot_date=None):
+    """Record today's iv_30d for a ticker. Keeps last 120 entries (~6 months).
+
+    iv_30d is stored as a decimal (e.g. 0.45 = 45%)."""
+    if snapshot_date is None:
+        snapshot_date = date.today()
+    date_str = snapshot_date.isoformat()
+
+    data = _load_iv30d_snapshots()
+    if ticker not in data:
+        data[ticker] = []
+
+    # Deduplicate: replace same-date entry
+    data[ticker] = [s for s in data[ticker] if s.get("date") != date_str]
+    data[ticker].append({"date": date_str, "iv_30d": float(iv_30d)})
+    data[ticker] = sorted(data[ticker], key=lambda x: x["date"])[-120:]
+    _save_iv30d_snapshots(data)
+
+
+def get_iv30d_baseline(ticker):
+    """Get rolling median iv_30d and robust stats for a ticker.
+
+    Requires at least IV30D_MIN_SNAPSHOTS entries for iv_30d median.
+    Falls back to 60-day historical volatility (HV) when snapshots are
+    insufficient. Returns dict with source field indicating provenance.
+
+    Returns:
+        {median, mad, count, source} where source is one of:
+        "iv30d_median" | "hv_60d" | None
+        median=None only when both iv_30d history AND HV are unavailable.
+    """
+    data = _load_iv30d_snapshots()
+    entries = data.get(ticker, [])
+
+    if len(entries) >= IV30D_MIN_SNAPSHOTS:
+        values = [s["iv_30d"] for s in entries if s.get("iv_30d") is not None]
+        if len(values) >= IV30D_MIN_SNAPSHOTS:
+            median = float(np.median(values))
+            mad = float(np.median([abs(v - median) for v in values]))
+            return {"median": median, "mad": mad, "count": len(values), "source": "iv30d_median"}
+
+    # Fallback: 60-trading-day historical volatility
+    if compute_hv_window is not None:
+        try:
+            hv = compute_hv_window(ticker, window_trading_days=60)
+            if hv is not None and hv > 0:
+                return {"median": hv, "mad": None, "count": 0, "source": "hv_60d"}
+        except Exception:
+            pass
+
+    return {"median": None, "mad": None, "count": len(entries), "source": None}
+
+
+# ═══════════════════════════════════════════════════════════
+# Recovery Feasibility Diagnostic
+# ═══════════════════════════════════════════════════════════
+
+def _trading_to_calendar_days(today_date, trading_days):
+    """Convert trading days to calendar days, skipping weekends.
+
+    e.g. Friday + 2 trading days = 4 calendar days (Mon/Tue).
+    Does not account for holidays."""
+    remaining = trading_days
+    calendar_days = 0
+    cursor = today_date
+    while remaining > 0:
+        cursor = cursor + timedelta(days=1)
+        calendar_days += 1
+        if cursor.weekday() < 5:  # Mon-Fri
+            remaining -= 1
+    return calendar_days
+
+
+def recovery_diagnostic(current_mark, credit_received, spot, strike, delta, gamma, theta, vega,
+                         current_iv, baseline_iv, dte, today_date=None,
+                         reference_iv_30d=None, horizon_trading_days=RECOVERY_HORIZON_TRADING_DAYS,
+                         stock_change=0.0, rate=RISK_FREE_RATE, baseline_source=None,
+                         baseline_mad=None):
+    """Recovery Feasibility Diagnostic for Tier 3 YELLOW positions.
+
+    Calculates whether the option could theoretically return below
+    WATCH_RESOLUTION_MULTIPLE × credit through IV normalization and theta decay.
+    This is a diagnostic, not a reversal prediction. It must never downgrade
+    RED/ORANGE or clear YELLOW hysteresis.
+
+    IV convention:
+        current_iv, baseline_iv = decimal (e.g. 0.84 = 84%)
+        vega = $ change per 1 percentage-point IV change (matching bs_put_greeks)
+        required_iv_drop_pp, headroom_pp = percentage points
+
+    baseline_source: "iv30d_median" | "hv_60d" | None — indicates provenance of baseline_iv
+
+    Returns:
+        dict with status (PLAUSIBLE|STRETCHED|INDETERMINATE), method,
+        and all intermediate values for audit/reporting.
+    """
+    from datetime import date as date_type
+
+    if today_date is None:
+        today_date = date_type.today()
+
+    target_mark = credit_received * WATCH_RESOLUTION_MULTIPLE
+    result = {
+        "status": "INDETERMINATE",
+        "method": None,
+        "current_mark": round(current_mark, 2),
+        "target_mark": round(target_mark, 2),
+        "horizon_trading_days": horizon_trading_days,
+        "stock_change": stock_change,
+        "current_iv_pct": round(current_iv * 100, 1) if current_iv is not None else None,
+        "baseline_iv_pct": round(baseline_iv * 100, 1) if baseline_iv is not None else None,
+        "baseline_source": baseline_source,
+        "required_iv_drop_pp": None,
+        "iv_reversion_headroom_pp": None,
+        "recovery_ratio": None,
+        "scenario_mark": None,
+        "scenario_mark_at_reference_iv": None,
+        "iv_z": None,
+        "caveats": [],
+    }
+
+    # ── Guard: Greeks must be valid ──
+    greeks_ok = all(
+        v is not None and not (isinstance(v, float) and math.isnan(v))
+        for v in [delta, gamma, theta, vega]
+    )
+    if not greeks_ok or abs(vega) < 1e-12:
+        greeks_ok = False
+        result["caveats"].append("missing or invalid Greeks; cannot compute Greek approximation")
+    if current_iv is None or current_iv <= 0:
+        result["caveats"].append("current IV unavailable")
+        return result
+    if dte is None or dte <= 0:
+        result["caveats"].append("DTE unavailable or expired")
+        return result
+
+    # ── Contextual scenario at reference IV (never produces PLAUSIBLE/STRETCHED) ──
+    if reference_iv_30d is not None and strike is not None and spot is not None and spot > 0:
+        cal_days = _trading_to_calendar_days(today_date, horizon_trading_days)
+        sc_dte = max(dte - cal_days, 1)
+        sc_spot = spot + stock_change
+        try:
+            sc_T = sc_dte / 365.0
+            sc_price = bs_put(sc_spot, strike, sc_T, reference_iv_30d, rate)
+            result["scenario_mark_at_reference_iv"] = round(sc_price, 2)
+            result["caveats"].append(
+                "scenario_mark_at_reference_iv uses current IV30d, not historical baseline; contextual only"
+            )
+        except (ValueError, ZeroDivisionError):
+            pass
+
+    # ── Baseline required for classification ──
+    if baseline_iv is None:
+        result["caveats"].append("historical baseline IV unavailable; insufficient snapshot history")
+        return result
+
+    # ── HV proxy caveat ──
+    if baseline_source == "hv_60d":
+        result["caveats"].append(
+            "baseline is 60-day historical volatility (HV), not IV; "
+            "HV systematically differs from IV by the vol risk premium. "
+            "Upgrades to iv30d median once 30 daily snapshots accumulate."
+        )
+
+    # ── Robust IV elevation (z-score, informational only) ──
+    if baseline_source == "iv30d_median" and baseline_mad is not None and baseline_mad > 0 and reference_iv_30d is not None:
+        iv_z_robust = (reference_iv_30d - baseline_iv) / (1.4826 * baseline_mad)
+        result["iv_z"] = round(iv_z_robust, 2)
+
+    # ── Greek approximation ──
+    # vega is per 1% IV change (per 0.01 sigma). The formula produces
+    # required_iv_change in percentage points. headroom is also in pp.
+    if greeks_ok:
+        # Taylor expansion: Δoption ≈ delta·ΔS + ½gamma·(ΔS)² + vega·Δσ + theta·Δt
+        # Solve for Δσ: Δσ = (Δoption - delta·ΔS - ½gamma·(ΔS)² - theta·Δt) / vega
+        numerator = (
+            target_mark
+            - current_mark
+            - delta * stock_change
+            - 0.5 * gamma * stock_change ** 2
+            - theta * horizon_trading_days
+        )
+        required_iv_change_pp = numerator / vega  # result in percentage points
+        required_iv_drop_pp = max(0.0, -required_iv_change_pp)
+        result["required_iv_drop_pp"] = round(required_iv_drop_pp, 1)
+
+        headroom_pp = max(0.0, (current_iv - baseline_iv) * 100.0)
+        result["iv_reversion_headroom_pp"] = round(headroom_pp, 1)
+
+        if required_iv_drop_pp == 0:
+            result["recovery_ratio"] = 0.0
+        elif headroom_pp <= 0:
+            result["recovery_ratio"] = float("inf")
+        else:
+            result["recovery_ratio"] = round(required_iv_drop_pp / headroom_pp, 3)
+
+    # ── Full reprice scenario (preferred method when Greeks available) ──
+    if strike is not None and spot is not None and spot > 0:
+        cal_days = _trading_to_calendar_days(today_date, horizon_trading_days)
+        sc_dte = max(dte - cal_days, 1)
+        sc_spot = spot + stock_change
+        try:
+            sc_T = sc_dte / 365.0
+            sc_price = bs_put(sc_spot, strike, sc_T, baseline_iv, rate)
+            result["scenario_mark"] = round(sc_price, 2)
+            result["method"] = "full_reprice"
+        except (ValueError, ZeroDivisionError):
+            if greeks_ok:
+                result["method"] = "greek_approximation"
+
+    if result["method"] is None and greeks_ok:
+        result["method"] = "greek_approximation"
+
+    # ── Classify ──
+    if not greeks_ok or result.get("recovery_ratio") is None:
+        result["status"] = "INDETERMINATE"
+        return result
+
+    rr = result["recovery_ratio"]
+    if rr <= 1.0:
+        result["status"] = "PLAUSIBLE"
+    else:
+        result["status"] = "STRETCHED"
+
+    return result
+
+
 def _estimate_delta(price, strike, dte, iv):
     """Estimate put delta from Black-Scholes when chain delta is unavailable."""
     if not all([price, strike, dte, iv]) or dte <= 0 or iv <= 0:
@@ -331,7 +602,10 @@ def _estimate_delta(price, strike, dte, iv):
         return None
 
 
-def trigger_status(price, ma50, credit, opt_mid, strike=None, delta=None, dte=None, iv=None, watch_state=None, ma50_state=None):
+def trigger_status(price, ma50, credit, opt_mid, strike=None, delta=None, dte=None, iv=None, watch_state=None, ma50_state=None,
+                    gamma=None, theta=None, vega=None, baseline_iv=None, reference_iv_30d=None, today_date=None,
+                    baseline_source=None, quote_valid=True, quote_warnings=None, quote_reason="",
+                    baseline_mad=None):
     """Return (color, label, watch_info) for position trigger state.
 
     Three independent risk dimensions.  The highest-severity result wins.
@@ -352,6 +626,11 @@ def trigger_status(price, ma50, credit, opt_mid, strike=None, delta=None, dte=No
     3. Tier 3 (escalation): option mid ≥ 3.0× credit (= −200% P&L).
        This is an escalation trigger, not an exit decision.
        If forward-risk signals remain benign → YELLOW WATCH (diagnose).
+
+    Recovery diagnostic: when Tier 3 YELLOW fires without higher-priority
+    signals, a recovery_diagnostic() is run and attached to watch_info.
+    This is a feasibility check, not a new exit trigger. It never
+    downgrades RED/ORANGE or clears YELLOW hysteresis.
 
     Priority: RED > ORANGE > YELLOW > GREEN.  A YELLOW from Tier 3
     never downgrades an ORANGE from Tier 1.
@@ -382,7 +661,6 @@ def trigger_status(price, ma50, credit, opt_mid, strike=None, delta=None, dte=No
     # ── Resolve delta ──
     abs_delta = None
     if delta is not None:
-        import math
         if not math.isnan(delta):
             abs_delta = abs(delta)  # chain-provided delta may be negative
     if abs_delta is None and price and strike and dte and iv:
@@ -430,6 +708,36 @@ def trigger_status(price, ma50, credit, opt_mid, strike=None, delta=None, dte=No
                 "resolution_at": round(credit * WATCH_RESOLUTION_MULTIPLE, 2),
                 "started_multiple": current_multiple,
             }
+            # ── Recovery feasibility diagnostic (Tier 3 YELLOW only, never alters priority) ──
+            if iv is not None and strike is not None and dte is not None and price is not None:
+                if not quote_valid:
+                    # Hard-invalid quote: skip Greeks, diagnostic not reliable
+                    tier3_watch_info["recovery_diagnostic"] = {
+                        "status": "INDETERMINATE",
+                        "method": None,
+                        "caveats": [f"quote rejected: {quote_reason}"],
+                    }
+                else:
+                    rd = recovery_diagnostic(
+                        current_mark=opt_mid,
+                        credit_received=credit,
+                        spot=price,
+                        strike=strike,
+                        delta=delta if delta is not None else (-abs_delta if abs_delta is not None else None),
+                        gamma=gamma,
+                        theta=theta,
+                        vega=vega,
+                        current_iv=iv,
+                        baseline_iv=baseline_iv,
+                        dte=dte,
+                        today_date=today_date,
+                        reference_iv_30d=reference_iv_30d,
+                        baseline_source=baseline_source,
+                        baseline_mad=baseline_mad,
+                    )
+                    if quote_warnings:
+                        rd["caveats"].extend(quote_warnings)
+                    tier3_watch_info["recovery_diagnostic"] = rd
 
     # ── Combine: highest severity wins ──
     # RED > ORANGE > YELLOW > GREEN
@@ -667,12 +975,35 @@ async def main():
             loss_pct = round((opt["mid"] - credit) / credit * 100, 0)
             loss_threshold = round(credit * CUT_LOSS_MULTIPLE, 2)
 
+        # Compute baseline_iv from IV30d snapshots (falls back to 60-day HV)
+        iv30d_val = iv.get("iv_30d")
+        reference_iv_30d = iv30d_val / 100.0 if iv30d_val is not None else None  # Tastytrade iv_30d is %, convert to decimal
+        baseline = get_iv30d_baseline(sym)
+        baseline_iv = baseline["median"]  # iv30d median or HV fallback
+        baseline_source = baseline["source"]
+        baseline_count = baseline["count"]
+
+        # Store today's IV30d snapshot for future baseline computation
+        if iv30d_val is not None:
+            store_iv30d_snapshot(sym, iv30d_val / 100.0, snapshot_date=today)
+
         status_emoji, status_label, watch_info = trigger_status(
             price, ma50, credit, opt.get("mid"),
             strike=strike,
             delta=opt.get("delta"),
             dte=dte_num,
             iv=opt.get("iv_absolute") / 100 if opt.get("iv_absolute") else None,
+            gamma=opt.get("gamma"),
+            theta=opt.get("theta"),
+            vega=opt.get("vega"),
+            baseline_iv=baseline_iv,
+            reference_iv_30d=reference_iv_30d,
+            today_date=today,
+            baseline_source=baseline_source,
+            quote_valid=opt.get("quote_valid", True),
+            quote_warnings=opt.get("quote_warnings"),
+            quote_reason=opt.get("quote_reason", ""),
+            baseline_mad=baseline.get("mad"),
         )
 
         # Earnings gate: flag binary risk if earnings inside DTE window
@@ -696,6 +1027,10 @@ async def main():
             "loss_threshold": loss_threshold,
             "iv_rank": round(iv_rank * 100, 0) if iv_rank else None,
             "iv_absolute": opt.get("iv_absolute"),
+            "reference_iv_30d": round(reference_iv_30d * 100, 1) if reference_iv_30d is not None else None,
+            "baseline_iv_median": round(baseline_iv * 100, 1) if baseline_iv is not None else None,
+            "baseline_iv_source": baseline_source,
+            "baseline_iv_snapshots": baseline_count,
             "delta": opt.get("delta"),
             "gamma": opt.get("gamma"),
             "vega": opt.get("vega"),

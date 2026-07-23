@@ -13,10 +13,11 @@ Designed for cron (15 min during US market hours).
 
 import asyncio
 import json
+import math
 import os
 import sys
 import tempfile
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import yfinance as yf
 from tastytrade import Session, metrics as tt_metrics
@@ -40,6 +41,14 @@ MA50_PERSISTENCE_DAYS = 2     # Consecutive days below MA50 before ORANGE (not a
 EQUALS = "="
 WATCH_STATE_FILE = os.path.expanduser("~/.hermes/cache/watch_states.json")
 MA50_STATE_FILE = os.path.expanduser("~/.hermes/cache/ma50_states.json")
+
+# Shared pricing and recovery diagnostic
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from pricing import bs_put_greeks, bs_put, calc_put_delta, R as RISK_FREE_RATE
+from review.position_review import (
+    recovery_diagnostic, store_iv30d_snapshot, get_iv30d_baseline,
+    RECOVERY_HORIZON_TRADING_DAYS, validate_quote,
+)
 
 
 def contract_key(sym, strike, expiry):
@@ -234,9 +243,13 @@ def get_option_prices(symbols, positions):
                 last = row["lastPrice"].values[0]
                 mid = (bid + ask) / 2 if bid and ask else last
                 iv = float(row["impliedVolatility"].values[0]) if "impliedVolatility" in row.columns else None
+                quote_valid, quote_reason, quote_warnings = validate_quote(bid, ask, mid)
                 result[f"{sym}_{strike}"] = {
                     "bid": bid, "ask": ask, "last": last, "mid": mid,
                     "iv": iv,
+                    "quote_valid": quote_valid,
+                    "quote_reason": quote_reason,
+                    "quote_warnings": quote_warnings,
                 }
             except Exception:
                 pass
@@ -252,29 +265,38 @@ def _estimate_delta_monitor(price, strike, dte, iv):
         return None
     try:
         T = max(dte / 365.0, 1 / 365.0)
-        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        from pricing import calc_put_delta
         d = calc_put_delta(price, strike, iv, T)
         return round(abs(d), 4)
     except (ValueError, ZeroDivisionError):
         return None
 
 
-def evaluate(positions, technicals, iv_data, option_prices, watch_states=None, ma50_states=None):
+def evaluate(positions, technicals, iv_data, option_prices, watch_states=None, ma50_states=None,
+             baseline_iv_by_sym=None, reference_iv_30d_by_sym=None, today_date=None,
+             baseline_source_by_sym=None):
     """Evaluate all positions. Integrates cross-tick YELLOW hysteresis and MA50 persistence.
 
     Args:
         watch_states: dict of {contract_key: {reason, resolution_at, started_multiple, expiry}}
         ma50_states: dict of {contract_key: {days, first_seen, expiry}}
+        baseline_iv_by_sym: dict of {symbol: baseline_iv_decimal} from IV30d snapshots
+        reference_iv_30d_by_sym: dict of {symbol: reference_iv_30d_decimal} (Tastytrade current IV30d)
+        today_date: date object for calendar-day horizon conversion
 
     Returns:
         (alerts, watch_states, ma50_states) tuple. Caller must persist the states.
-        alerts: list of alert dicts with symbol, signal, msg.
+        alerts: list of alert dicts with symbol, signal, msg, recovery_diagnostic.
     """
     if ma50_states is None:
         ma50_states = {}
+    if baseline_iv_by_sym is None:
+        baseline_iv_by_sym = {}
+    if reference_iv_30d_by_sym is None:
+        reference_iv_30d_by_sym = {}
     alerts = []
-    today = date.today()
+    if today_date is None:
+        today_date = date.today()
+    today = today_date
 
     for pos in positions:
         sym = pos["symbol"]
@@ -296,12 +318,28 @@ def evaluate(positions, technicals, iv_data, option_prices, watch_states=None, m
         opt_iv = opt.get("iv")
 
         try:
-            dte = (date.fromisoformat(expiry) - date.today()).days
+            dte = (date.fromisoformat(expiry) - today).days
         except (KeyError, ValueError):
             dte = None
 
         # ── Resolve delta ──
         abs_delta = _estimate_delta_monitor(price, strike, dte, opt_iv)
+
+        # ── Compute Greeks for recovery diagnostic ──
+        monitor_gamma = None
+        monitor_theta = None
+        monitor_vega = None
+        monitor_delta_signed = None
+        if price and strike and dte and opt_iv and price > 0 and dte > 0 and opt_iv > 0:
+            try:
+                T = max(dte / 365.0, 1 / 365.0)
+                g = bs_put_greeks(price, strike, T, opt_iv, RISK_FREE_RATE)
+                monitor_gamma = g['gamma']
+                monitor_theta = g['theta']
+                monitor_vega = g['vega']
+                monitor_delta_signed = g['delta']  # negative for puts
+            except (ValueError, ZeroDivisionError):
+                pass
 
         # ── Tier 1: thesis — MA50 persistence check ──
         # Day 1 below MA50: YELLOW warning. Day MA50_PERSISTENCE_DAYS+: ORANGE.
@@ -368,6 +406,39 @@ def evaluate(positions, technicals, iv_data, option_prices, watch_states=None, m
                     "started_at": datetime.now().isoformat(),
                     "expiry": expiry,
                 }
+                # ── Recovery feasibility diagnostic ──
+                if opt_iv is not None and price is not None and dte is not None and strike is not None:
+                    quote_valid = opt.get("quote_valid", True)
+                    quote_reason = opt.get("quote_reason", "")
+                    quote_warnings = opt.get("quote_warnings")
+                    if not quote_valid:
+                        tier3_watch_info["recovery_diagnostic"] = {
+                            "status": "INDETERMINATE",
+                            "method": None,
+                            "caveats": [f"quote rejected: {quote_reason}"],
+                        }
+                    else:
+                        baseline_iv = baseline_iv_by_sym.get(sym)
+                        ref_iv = reference_iv_30d_by_sym.get(sym)
+                        rd = recovery_diagnostic(
+                            current_mark=opt_mid,
+                            credit_received=credit,
+                            spot=price,
+                            strike=strike,
+                            delta=monitor_delta_signed if monitor_delta_signed is not None else (-abs_delta if abs_delta is not None else None),
+                            gamma=monitor_gamma,
+                            theta=monitor_theta,
+                            vega=monitor_vega,
+                            current_iv=opt_iv,
+                            baseline_iv=baseline_iv,
+                            dte=dte,
+                            today_date=today_date,
+                            reference_iv_30d=ref_iv,
+                            baseline_source=baseline_source_by_sym.get(sym) if baseline_source_by_sym else None,
+                        )
+                        if quote_warnings:
+                            rd["caveats"].extend(quote_warnings)
+                        tier3_watch_info["recovery_diagnostic"] = rd
 
         # ── Combine: highest severity wins ──
         # RED > ORANGE > YELLOW > GREEN
@@ -440,6 +511,9 @@ def evaluate(positions, technicals, iv_data, option_prices, watch_states=None, m
                     parts.append(f"  Option mid ${opt_mid:.2f} >= ${credit * CUT_LOSS_MULTIPLE:.2f}")
                     if resolution_info.get("resolution_at"):
                         parts.append(f"  Watch clears below ${resolution_info['resolution_at']:.2f}")
+                    rd = resolution_info.get("recovery_diagnostic", {})
+                    if rd and rd.get("status") not in (None, "INDETERMINATE"):
+                        parts.append("  Recovery: " + rd["status"] + " (ratio " + str(rd.get("recovery_ratio", "?")) + ")")
             if abs_delta:
                 parts.append(f"  Put delta {abs_delta:.2f}")
 
@@ -469,7 +543,32 @@ async def main():
 
     watch_states = load_watch_states()
     ma50_states = load_ma50_states()
-    alerts, watch_states, ma50_states = evaluate(positions, technicals, iv_data, option_prices, watch_states, ma50_states)
+
+    # Compute baseline_iv from IV30d snapshots and store today's values
+    today_date = date.today()
+    baseline_iv_by_sym = {}
+    reference_iv_30d_by_sym = {}
+    baseline_source_by_sym = {}
+    for sym in symbols:
+        iv_info = iv_data.get(sym, {})
+        iv30d_val = iv_info.get("iv_30d")
+        if iv30d_val is not None:
+            iv30d_decimal = iv30d_val / 100.0
+            reference_iv_30d_by_sym[sym] = iv30d_decimal
+            store_iv30d_snapshot(sym, iv30d_decimal, snapshot_date=today_date)
+        baseline = get_iv30d_baseline(sym)
+        if baseline["median"] is not None:
+            baseline_iv_by_sym[sym] = baseline["median"]
+            baseline_source_by_sym[sym] = baseline.get("source")
+
+    alerts, watch_states, ma50_states = evaluate(
+        positions, technicals, iv_data, option_prices,
+        watch_states, ma50_states,
+        baseline_iv_by_sym=baseline_iv_by_sym,
+        reference_iv_30d_by_sym=reference_iv_30d_by_sym,
+        today_date=today_date,
+        baseline_source_by_sym=baseline_source_by_sym,
+    )
     save_watch_states(watch_states)
     save_ma50_states(ma50_states)
 

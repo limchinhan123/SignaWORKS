@@ -49,19 +49,17 @@ SignaWORKS exists to put something between your instincts and your brokerage acc
 
 **48 tickers. 6 gates. 21 actionable.** No opinions, no gut feels, no "I think the market is going to..." If it doesn't pass the gates, it doesn't reach your eyes.
 
-But entry is half the story. On the other side, two tiers of exit rules operate independently:
+But entry is half the story. On the other side, **three independent risk tiers** evaluate every position simultaneously, with the highest-severity signal winning:
 
-**Tier 1: Combined Exit Rule (standard)**
-Two conditions must BOTH fire before cutting:
-- Premium loss exceeds 1.5× the credit received (the market agrees something changed)
-- The stock breaks below key support level (the thesis is genuinely damaged)
+| Tier | Trigger | Signal | Action |
+|------|---------|--------|--------|
+| **Tier 1 (thesis)** | Price < 50-day MA | Day 1 = YELLOW, Day 2+ = ORANGE | Watch, then plan exit |
+| **Tier 2 (forward risk)** | Put delta ≥ 0.25 + loss ≥ 1.5× credit | 0.25-0.35 = YELLOW, ≥ 0.35 = RED | RED = hard exit, YELLOW = watch |
+| **Tier 3 (escalation)** | Option mid ≥ 3.0× credit | YELLOW + recovery diagnostic | Watch with feasibility analysis |
 
-If only one fires, the default is hold. If both fire, cut. This two-condition rule exists precisely because most underwater positions are driven by fear expansion, not broken companies. Requiring both conditions filters out panic.
+**Tier 3 includes a Recovery Feasibility Diagnostic** — a quantitative check of whether the position could theoretically return below 2.0× credit through IV normalization and theta decay alone. It uses a Greek Taylor approximation validated by full Black-Scholes reprice. The diagnostic never alters the signal color — it's information, not a new exit trigger. Baseline IV comes from a rolling 60-trading-day median of Tastytrade iv_30d snapshots (falls back to 60-day historical volatility until 30 snapshots accumulate).
 
-**Tier 2: Hard Override (unconditional)**
-The option's mid price hits 3× the credit received (= approximately −200% unrealized P&L on premium) → EXIT. No exemptions, no "but fear is high," no escape hatches. This rule is unconditional because at 200% loss, something structural changed.
-
-When both tiers fire simultaneously: **HARD EXIT.** No deliberation, no deep analysis. Some positions don't need thinking. They need a stop.
+**Priority:** RED > ORANGE > YELLOW > GREEN. No lower-tier signal ever overrides a higher one. YELLOW persists until the mid drops below 2.0× credit, unless a current RED or ORANGE fires.
 
 The gates are summarized below. But they're not the edge. The edge is what sits between entry and exit: Phases 9-11, the deep analysis that tells you *why* your position is down and whether the loss is from fear (don't cut) or from the stock actually breaking (cut).
 
@@ -370,7 +368,7 @@ When a position is live, the framework shifts from binary (pass/fail) to **non-b
 | Phase | Question Answered | What It Produces |
 |:-----:|-------------------|------------------|
 | 5 | How close to the edge? | Distance to strike, how fast risk is accelerating, time urgency |
-| 6 | Do both exit conditions fire? | Cut signal requires premium loss >1.5× AND price below support |
+| 6 | Does the exit framework fire? | Tier 1 (thesis), Tier 2 (delta), or Tier 3 (escalation + recovery diagnostic) |
 | 7 | Where are the safety nets? | Moving averages, swing lows, volume levels, round numbers |
 | 8 | What's the verdict? | One-sentence conclusion with specific action triggers |
 

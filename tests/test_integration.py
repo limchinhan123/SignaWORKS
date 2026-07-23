@@ -784,3 +784,391 @@ def test_ma50_recovery_no_breach():
         ma50_state={"days": 3},
     )
     assert status == "GREEN"
+
+
+# ═══════════════════════════════════════════════════════════
+# Recovery Feasibility Diagnostic tests
+# ═══════════════════════════════════════════════════════════
+
+# Test fixture: WDC-like position at 3.2x credit, high IV
+WDC_RECOVERY = dict(
+    current_mark=25.57,      # ~3.2x credit ($7.99)
+    credit_received=7.99,
+    spot=537.0,
+    strike=450.0,
+    delta=-0.2235,           # signed
+    gamma=0.001895,
+    theta=-1.1925,           # per trading day
+    vega=0.4443,             # per 1% IV change
+    current_iv=0.84,         # 84%
+    baseline_iv=0.63,        # 63%
+    dte=28,
+)
+
+
+def test_recovery_plausible():
+    """Required IV drop within headroom -> PLAUSIBLE."""
+    from review.position_review import recovery_diagnostic
+    rd = recovery_diagnostic(**WDC_RECOVERY)
+    assert rd["status"] == "PLAUSIBLE"
+    assert rd["method"] is not None
+    assert rd["recovery_ratio"] <= 1.0
+    assert rd["required_iv_drop_pp"] is not None
+    assert rd["iv_reversion_headroom_pp"] is not None
+    assert rd["iv_reversion_headroom_pp"] == 21.0
+    assert rd["current_iv_pct"] == 84.0
+    assert rd["baseline_iv_pct"] == 63.0
+
+
+def test_recovery_stretched():
+    """Required IV drop exceeds headroom -> STRETCHED."""
+    from review.position_review import recovery_diagnostic
+    rd = recovery_diagnostic(
+        current_mark=25.57,
+        credit_received=7.99,
+        spot=537.0,
+        strike=450.0,
+        delta=-0.2235,
+        gamma=0.001895,
+        theta=-0.50,          # very low theta decay
+        vega=0.15,            # very low vega -> needs huge IV drop
+        current_iv=0.84,
+        baseline_iv=0.82,     # only 2pp headroom
+        dte=28,
+    )
+    assert rd["status"] == "STRETCHED"
+    assert rd["recovery_ratio"] > 1.0
+
+
+def test_recovery_theta_alone_reaches_target():
+    """Theta alone reaches target -> zero required IV drop."""
+    from review.position_review import recovery_diagnostic
+    rd = recovery_diagnostic(
+        current_mark=15.98,     # exactly at target (2.0 * 7.99)
+        credit_received=7.99,
+        spot=537.0,
+        strike=450.0,
+        delta=-0.10,
+        gamma=0.001,
+        theta=-0.50,
+        vega=0.44,
+        current_iv=0.60,
+        baseline_iv=0.50,
+        dte=28,
+    )
+    assert rd["status"] == "PLAUSIBLE"
+    assert rd["required_iv_drop_pp"] == 0.0
+    assert rd["recovery_ratio"] == 0.0
+
+
+def test_recovery_missing_baseline_iv():
+    """Missing baseline IV -> INDETERMINATE."""
+    from review.position_review import recovery_diagnostic
+    rd = recovery_diagnostic(
+        current_mark=25.57,
+        credit_received=7.99,
+        spot=537.0,
+        strike=450.0,
+        delta=-0.2235,
+        gamma=0.001895,
+        theta=-1.19,
+        vega=0.44,
+        current_iv=0.84,
+        baseline_iv=None,     # MISSING
+        dte=28,
+    )
+    assert rd["status"] == "INDETERMINATE"
+    assert "baseline" in str(rd["caveats"]).lower()
+
+
+def test_recovery_invalid_vega():
+    """Zero vega -> INDETERMINATE."""
+    from review.position_review import recovery_diagnostic
+    rd = recovery_diagnostic(
+        current_mark=25.57,
+        credit_received=7.99,
+        spot=537.0,
+        strike=450.0,
+        delta=-0.2235,
+        gamma=0.001895,
+        theta=-1.19,
+        vega=0.0,             # INVALID
+        current_iv=0.84,
+        baseline_iv=0.63,
+        dte=28,
+    )
+    assert rd["status"] == "INDETERMINATE"
+    assert "missing or invalid greeks" in str(rd["caveats"]).lower()
+
+
+def test_recovery_nan_greeks():
+    """NaN Greek inputs -> INDETERMINATE."""
+    from review.position_review import recovery_diagnostic
+    import math
+    rd = recovery_diagnostic(
+        current_mark=25.57,
+        credit_received=7.99,
+        spot=537.0,
+        strike=450.0,
+        delta=float('nan'),
+        gamma=0.001895,
+        theta=-1.19,
+        vega=0.44,
+        current_iv=0.84,
+        baseline_iv=0.63,
+        dte=28,
+    )
+    assert rd["status"] == "INDETERMINATE"
+
+
+def test_recovery_missing_current_iv():
+    """None current_iv -> INDETERMINATE."""
+    from review.position_review import recovery_diagnostic
+    rd = recovery_diagnostic(
+        current_mark=25.57,
+        credit_received=7.99,
+        spot=537.0,
+        strike=450.0,
+        delta=-0.2235,
+        gamma=0.001895,
+        theta=-1.19,
+        vega=0.44,
+        current_iv=None,
+        baseline_iv=0.63,
+        dte=28,
+    )
+    assert rd["status"] == "INDETERMINATE"
+
+
+def test_recovery_missing_dte():
+    """Zero DTE -> INDETERMINATE."""
+    from review.position_review import recovery_diagnostic
+    rd = recovery_diagnostic(
+        current_mark=25.57,
+        credit_received=7.99,
+        spot=537.0,
+        strike=450.0,
+        delta=-0.2235,
+        gamma=0.001895,
+        theta=-1.19,
+        vega=0.44,
+        current_iv=0.84,
+        baseline_iv=0.63,
+        dte=0,
+    )
+    assert rd["status"] == "INDETERMINATE"
+
+
+def test_recovery_trigger_status_attaches_diagnostic():
+    """trigger_status attaches recovery_diagnostic to watch_info on Tier 3 YELLOW."""
+    from review.position_review import trigger_status
+    status, label, watch_info = trigger_status(
+        price=537.0, ma50=450.0, credit=7.99, opt_mid=25.57,
+        strike=450.0, delta=-0.2235, dte=28, iv=0.84,
+        gamma=0.001895, theta=-1.1925, vega=0.4443,
+        baseline_iv=0.63,
+    )
+    assert status == "YELLOW"
+    assert watch_info is not None
+    assert "recovery_diagnostic" in watch_info
+    rd = watch_info["recovery_diagnostic"]
+    assert rd["status"] == "PLAUSIBLE"
+
+
+def test_recovery_not_run_on_green():
+    """GREEN positions do not trigger recovery_diagnostic."""
+    from review.position_review import trigger_status
+    status, label, watch_info = trigger_status(
+        price=537.0, ma50=450.0, credit=7.99, opt_mid=10.0,
+        strike=450.0, delta=-0.22, dte=28, iv=0.60,
+        gamma=0.001, theta=-0.50, vega=0.30,
+        baseline_iv=0.50,
+    )
+    assert status == "GREEN"
+    assert watch_info is None
+
+
+def test_recovery_does_not_alter_signal_priority():
+    """ORANGE from thesis wins even with plausible recovery."""
+    from review.position_review import trigger_status
+    status, label, watch_info = trigger_status(
+        price=400.0, ma50=500.0, credit=7.99, opt_mid=25.57,
+        strike=450.0, delta=0.10, dte=28, iv=0.84,
+        gamma=0.001895, theta=-1.19, vega=0.44,
+        baseline_iv=0.63,
+    )
+    assert status == "ORANGE"  # MA50 breach wins, not YELLOW
+    assert watch_info is None
+
+
+def test_recovery_contextual_reference_iv():
+    """reference_iv_30d produces scenario_mark_at_reference_iv but stays INDETERMINATE."""
+    from review.position_review import recovery_diagnostic
+    rd = recovery_diagnostic(
+        current_mark=25.57,
+        credit_received=7.99,
+        spot=537.0,
+        strike=450.0,
+        delta=-0.2235,
+        gamma=0.001895,
+        theta=-1.19,
+        vega=0.44,
+        current_iv=0.84,
+        baseline_iv=None,
+        dte=28,
+        reference_iv_30d=0.55,
+    )
+    assert rd["status"] == "INDETERMINATE"
+    assert rd["scenario_mark_at_reference_iv"] is not None
+    assert "contextual" in str(rd["caveats"]).lower()
+
+
+def test_recovery_iv_unit_normalization():
+    """Vega per 1pp * IV decimal conversion is correct.
+
+    target - current = 15.98 - 25.57 = -9.59
+    theta * 2 = -1.1925 * 2 = -2.385
+    -theta * 2 = +2.385 (decay helps)
+    numerator = -9.59 + 2.385 = -7.205
+    required_iv_drop_pp = 7.205 / 0.4443 ~ 16.22pp
+    headroom_pp = (0.84 - 0.63) * 100 = 21.0pp
+    ratio ~ 0.772
+    """
+    from review.position_review import recovery_diagnostic
+    rd = recovery_diagnostic(**WDC_RECOVERY)
+    assert rd["status"] == "PLAUSIBLE"
+    assert abs(rd["required_iv_drop_pp"] - 16.4) < 2.0
+    assert rd["iv_reversion_headroom_pp"] == 21.0
+    assert abs(rd["recovery_ratio"] - 0.78) < 0.15
+
+
+def test_recovery_trading_to_calendar_weekend():
+    """Trading-to-calendar conversion skips weekends."""
+    from review.position_review import _trading_to_calendar_days
+    from datetime import date
+    thu = date(2026, 7, 23)  # Thursday
+    assert _trading_to_calendar_days(thu, 2) == 4
+    fri = date(2026, 7, 24)  # Friday
+    assert _trading_to_calendar_days(fri, 2) == 4
+    mon = date(2026, 7, 27)  # Monday
+    assert _trading_to_calendar_days(mon, 2) == 2
+
+
+def test_recovery_full_reprice_scenario():
+    """Full reprice scenario mark is computed when baseline and strike available."""
+    from review.position_review import recovery_diagnostic
+    rd = recovery_diagnostic(**WDC_RECOVERY)
+    assert rd["scenario_mark"] is not None
+    assert rd["method"] == "full_reprice"
+    assert rd["scenario_mark"] > 0
+
+
+# ═══════════════════════════════════════════════════════════
+# HV fallback baseline tests
+# ═══════════════════════════════════════════════════════════
+
+def test_get_iv30d_baseline_hv_fallback():
+    """get_iv30d_baseline falls back to 60-day HV when no snapshots exist."""
+    from review.position_review import get_iv30d_baseline
+    baseline = get_iv30d_baseline("WDC")
+    assert baseline["source"] in ("hv_60d", "iv30d_median")
+    assert baseline["median"] is not None
+    assert baseline["median"] > 0
+
+
+def test_recovery_with_hv_baseline_is_not_indeterminate():
+    """HV baseline produces PLAUSIBLE or STRETCHED, not INDETERMINATE."""
+    from review.position_review import recovery_diagnostic
+    rd = recovery_diagnostic(
+        current_mark=25.57, credit_received=7.99,
+        spot=537.0, strike=450.0,
+        delta=-0.2235, gamma=0.001895, theta=-1.1925, vega=0.4443,
+        current_iv=0.84, baseline_iv=0.50, dte=28,
+        baseline_source="hv_60d",
+    )
+    assert rd["status"] in ("PLAUSIBLE", "STRETCHED")
+    assert rd["baseline_source"] == "hv_60d"
+    assert any("HV" in c for c in rd["caveats"])
+
+
+def test_recovery_hv_caveat_present():
+    """HV baseline includes the vol risk premium caveat."""
+    from review.position_review import recovery_diagnostic
+    rd = recovery_diagnostic(
+        current_mark=25.57, credit_received=7.99,
+        spot=537.0, strike=450.0,
+        delta=-0.2235, gamma=0.001895, theta=-1.1925, vega=0.4443,
+        current_iv=0.84, baseline_iv=0.50, dte=28,
+        baseline_source="hv_60d",
+    )
+    caveat_text = " ".join(rd["caveats"])
+    assert "vol risk premium" in caveat_text.lower() or "HV" in caveat_text
+
+
+def test_recovery_quote_invalid_rejected():
+    """Invalid quote (quote_valid=False) -> INDETERMINATE with rejection caveat."""
+    from review.position_review import trigger_status
+    status, label, watch_info = trigger_status(
+        price=537.0, ma50=450.0, credit=7.99, opt_mid=25.57,
+        strike=450.0, delta=-0.2235, dte=28, iv=0.84,
+        gamma=0.001895, theta=-1.19, vega=0.44,
+        baseline_iv=0.63,
+        quote_valid=False, quote_reason="crossed market",
+    )
+    assert status == "YELLOW"  # signal unchanged
+    rd = watch_info["recovery_diagnostic"]
+    assert rd["status"] == "INDETERMINATE"
+    assert "quote rejected" in str(rd["caveats"]).lower()
+
+
+def test_recovery_quote_warnings_propagated():
+    """Quote warnings appear in recovery diagnostic caveats."""
+    from review.position_review import trigger_status
+    status, label, watch_info = trigger_status(
+        price=537.0, ma50=450.0, credit=7.99, opt_mid=25.57,
+        strike=450.0, delta=-0.2235, dte=28, iv=0.84,
+        gamma=0.001895, theta=-1.19, vega=0.44,
+        baseline_iv=0.63,
+        quote_valid=True, quote_warnings=["wide spread (28% of mid); midpoint unreliable"],
+    )
+    assert status == "YELLOW"
+    rd = watch_info["recovery_diagnostic"]
+    assert rd["status"] == "PLAUSIBLE"  # warning doesn't block
+    assert any("wide spread" in c for c in rd["caveats"])
+
+
+def test_recovery_ratio_exactly_one_boundary():
+    """recovery_ratio == 1.0 exactly -> PLAUSIBLE (<= check)."""
+    from review.position_review import recovery_diagnostic
+    # Design: required=10pp, headroom=10pp -> ratio=1.0
+    # vega=0.50, target=15.98 (2x credit=7.99), current=16.48, theta=0
+    # numerator = 15.98 - 16.48 = -0.50, required_iv_drop = 0.50/0.50 = 1.0pp
+    # headroom = (0.60 - 0.50) * 100 = 10.0... 
+    # Let me just construct a case where ratio comes out to 1.0
+    # target = 2.0 * 5.0 = 10.0
+    # current = 12.0, theta = 0, delta = 0, gamma = 0, stock_change = 0
+    # numerator = 10.0 - 12.0 = -2.0
+    # vega = 0.20 -> required = 10.0pp
+    # headroom = (0.50 - 0.40) * 100 = 10.0pp
+    # ratio = 10.0/10.0 = 1.0
+    rd = recovery_diagnostic(
+        current_mark=12.0, credit_received=5.0,
+        spot=100.0, strike=90.0,
+        delta=-0.10, gamma=0.001, theta=0.0, vega=0.20,
+        current_iv=0.50, baseline_iv=0.40, dte=30,
+        stock_change=0.0,
+    )
+    assert rd["status"] == "PLAUSIBLE"
+    assert rd["recovery_ratio"] == 1.0
+
+
+def test_trigger_status_ma50_none():
+    """trigger_status with ma50=None: thesis never fires."""
+    from review.position_review import trigger_status
+    status, label, _ = trigger_status(
+        price=400, ma50=None, credit=1.0, opt_mid=5.0,
+    )
+    # 3x loss breached, no delta -> YELLOW ESCALATE
+    # thesis check: ma50=None, so no thesis signal
+    assert status == "YELLOW"
+    assert "ESCALATE" in label
